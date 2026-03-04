@@ -1,5 +1,17 @@
+# Build artifacts
 *.o
 *.exe
 *.dll
 *.a
-nameclean_debug.log
+
+# Debug / log output
+*.log
+
+# Claude project memory (local only)
+.claude/
+
+# LLM model files (large binaries)
+*.gguf
+*.bin
+*.ggml
+models/
