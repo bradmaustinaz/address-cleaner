@@ -228,6 +228,7 @@ int name_clean(const char *raw, NameResult *result)
     }
 
     strncpy(result->raw, raw, NAME_MAX_LEN - 1);
+    result->raw[NAME_MAX_LEN - 1] = '\0'; /* explicit: don't rely solely on memset */
 
     char work[NAME_MAX_LEN];
     strncpy(work, raw, NAME_MAX_LEN - 1);

@@ -384,6 +384,9 @@ void llm_shutdown(void)
 {
     if (g_thread) {
         WaitForSingleObject(g_thread, 2000); /* let startup thread finish */
+        /* TerminateThread is generally unsafe but acceptable here: the process
+         * exits immediately after llm_shutdown(), so any transient lock state
+         * is irrelevant. */
         TerminateThread(g_thread, 0);
         CloseHandle(g_thread);
         g_thread = NULL;
