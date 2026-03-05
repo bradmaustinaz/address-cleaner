@@ -32,7 +32,7 @@ static HINTERNET       g_session = NULL; /* shared WinHTTP session           */
 static char            g_model_path[MAX_PATH] = {0};
 
 /* =========================================================================
- * Internal helpers: locate files next to the exe
+ * Internal helpers: locate files in ai\ subdirectory next to the exe
  * ====================================================================== */
 
 static void get_exe_dir(char *buf, size_t bufsz)
@@ -41,6 +41,14 @@ static void get_exe_dir(char *buf, size_t bufsz)
     char *sep = strrchr(buf, '\\');
     if (sep) sep[1] = '\0';
     else     buf[0] = '\0';
+}
+
+/* Build the ai\ subdirectory path: {exe_dir}ai\  */
+static void get_ai_dir(char *buf, size_t bufsz)
+{
+    get_exe_dir(buf, bufsz);
+    size_t len = strlen(buf);
+    snprintf(buf + len, bufsz - len, "ai\\");
 }
 
 /* Find the first *.gguf in dir.  Returns 1 on success. */
@@ -278,19 +286,19 @@ static DWORD WINAPI startup_thread(LPVOID param)
 {
     (void)param;
 
-    char exe_dir[MAX_PATH];
-    get_exe_dir(exe_dir, sizeof(exe_dir));
+    char ai_dir[MAX_PATH];
+    get_ai_dir(ai_dir, sizeof(ai_dir));
 
-    /* Verify llama-server.exe exists */
+    /* Verify llama-server.exe exists in ai\ */
     char server_exe[MAX_PATH];
-    snprintf(server_exe, sizeof(server_exe), "%sllama-server.exe", exe_dir);
+    snprintf(server_exe, sizeof(server_exe), "%sllama-server.exe", ai_dir);
     if (GetFileAttributesA(server_exe) == INVALID_FILE_ATTRIBUTES) {
         InterlockedExchange(&g_state, -1);
         return 0;
     }
 
-    /* Find *.gguf model */
-    if (!find_model(exe_dir, g_model_path, sizeof(g_model_path))) {
+    /* Find *.gguf model in ai\ */
+    if (!find_model(ai_dir, g_model_path, sizeof(g_model_path))) {
         InterlockedExchange(&g_state, -1);
         return 0;
     }
@@ -367,11 +375,11 @@ static DWORD WINAPI startup_thread(LPVOID param)
 
 void llm_init(void)
 {
-    /* Quick pre-check: if there's no server exe, don't even start a thread */
-    char exe_dir[MAX_PATH];
-    get_exe_dir(exe_dir, sizeof(exe_dir));
+    /* Quick pre-check: if there's no server exe in ai\, don't start a thread */
+    char ai_dir[MAX_PATH];
+    get_ai_dir(ai_dir, sizeof(ai_dir));
     char server_exe[MAX_PATH];
-    snprintf(server_exe, sizeof(server_exe), "%sllama-server.exe", exe_dir);
+    snprintf(server_exe, sizeof(server_exe), "%sllama-server.exe", ai_dir);
     if (GetFileAttributesA(server_exe) == INVALID_FILE_ATTRIBUTES) {
         InterlockedExchange(&g_state, -1);
         return;

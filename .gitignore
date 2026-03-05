@@ -4,11 +4,20 @@
 *.dll
 *.a
 
+# Windows NUL device artifact (created when Makefile runs under bash)
+NUL
+
 # Debug / log output
 *.log
 
 # Claude project memory (local only)
 .claude/
+
+# AI sidecar binaries and model (created by setup.bat)
+ai/
+
+# Session logs (generated at runtime)
+logs/
 
 # LLM model files (large binaries)
 *.gguf

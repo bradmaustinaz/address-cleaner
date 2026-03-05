@@ -14,6 +14,9 @@ typedef struct {
     char cleaned[NAME_MAX_LEN];  /* After all rules + capitalization    */
     int  flags;                  /* NAME_FLAG_* bitmask from rules.h    */
     char notes[256];             /* Human-readable summary of changes   */
+    /* Session logging: populated only when AI fallback was invoked */
+    char ai_input[NAME_MAX_LEN]; /* Rules-cleaned text sent to LLM     */
+    char ai_output[NAME_MAX_LEN];/* Raw LLM response                   */
 } NameResult;
 
 /*

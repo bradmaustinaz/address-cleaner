@@ -9,6 +9,7 @@
 #include "names.h"
 #include "rules.h"
 #include "llm.h"
+#include "slog.h"
 
 /* =========================================================================
  * Layout constants
@@ -105,6 +106,9 @@ static void do_clean(void)
     }
 #endif
 
+    /* --- Open session log (always on) ---------------------------------- */
+    slog_open();
+
     /* --- Process line by line ------------------------------------------ */
     int n_cleaned = 0;
     int n_flagged = 0;
@@ -126,6 +130,8 @@ static void do_clean(void)
 
         NameResult nr;
         name_clean(tsv_field(&row, 0), &nr);
+        slog_row(&nr, nr.ai_input[0] ? nr.ai_input : NULL,
+                      nr.ai_output[0] ? nr.ai_output : NULL);
 
         /* Grow output buffer if needed */
         size_t needed = out_pos + (size_t)input_len + 512;
@@ -171,7 +177,8 @@ next_line:
     out_buf[out_pos] = '\0';
     SetWindowText(g_hOutput, out_buf);
 
-    /* --- Close debug log and report ------------------------------------ */
+    /* --- Close logs and report ----------------------------------------- */
+    slog_close(n_cleaned, n_flagged, n_trust);
 #ifdef DEBUG
     rules_debug_close();
 #endif

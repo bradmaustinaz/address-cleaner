@@ -37,7 +37,7 @@ Download the **CPU** release of llama.cpp:
 <https://github.com/ggerganov/llama.cpp/releases>
 File: `llama-<version>-bin-win-noavx-x64.zip` or `-avx2-x64.zip`
 
-Files to place **next to `nameclean.exe`**:
+Files to place in **`ai\` next to `nameclean.exe`**:
 
 | File | Required |
 |------|----------|
@@ -59,7 +59,7 @@ Download the **CUDA 12.x** release of llama.cpp:
 <https://github.com/ggerganov/llama.cpp/releases>
 File: `llama-<version>-bin-win-cuda-cu12.x.x-x64.zip`
 
-Files to place **next to `nameclean.exe`**:
+Files to place in **`ai\` next to `nameclean.exe`**:
 
 | File | Source |
 |------|--------|
@@ -93,7 +93,7 @@ https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF
 ```
 File: `qwen2.5-1.5b-instruct-q4_k_m.gguf`
 
-Place it in the **same folder** as `nameclean.exe`. The app discovers any `*.gguf` file
+Place it in the **`ai\` folder** next to `nameclean.exe`. The app discovers any `*.gguf` file
 in that directory automatically — filename does not matter.
 
 ---
@@ -104,15 +104,16 @@ in that directory automatically — filename does not matter.
 nameclean\
   nameclean.exe                              ← main app (no extra DLLs needed)
 
-  [optional — AI features]
-  llama-server.exe                           ← llama.cpp server
-  ggml.dll                                   ← only if llama-server needs it
-  llama.dll                                  ← only if llama-server needs it
-  ggml-cuda.dll                              ← CUDA build only
-  cudart64_12.dll                            ← CUDA build only
-  cublas64_12.dll                            ← CUDA build only
-  cublasLt64_12.dll                          ← CUDA build only
-  qwen2.5-1.5b-instruct-q4_k_m.gguf        ← AI model (~940 MB)
+  [optional — AI features, all in ai\ subfolder]
+  ai\
+    llama-server.exe                         ← llama.cpp server
+    ggml.dll                                 ← only if llama-server needs it
+    llama.dll                                ← only if llama-server needs it
+    ggml-cuda.dll                            ← CUDA build only
+    cudart64_12.dll                          ← CUDA build only
+    cublas64_12.dll                          ← CUDA build only
+    cublasLt64_12.dll                        ← CUDA build only
+    qwen2.5-1.5b-instruct-q4_k_m.gguf      ← AI model (~940 MB)
 ```
 
 ---

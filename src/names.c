@@ -323,9 +323,17 @@ int name_clean(const char *raw, NameResult *result)
     if ((result->flags & (NAME_FLAG_NEEDS_AI | NAME_FLAG_SUSPICIOUS)) &&
         !(result->flags & NAME_FLAG_EMPTY) &&
         llm_is_ready()) {
+        /* Save what we're sending to the LLM for session logging */
+        strncpy(result->ai_input, result->cleaned, NAME_MAX_LEN - 1);
+        result->ai_input[NAME_MAX_LEN - 1] = '\0';
+
         char ai_out[NAME_MAX_LEN];
         if (llm_clean_name(result->raw, result->cleaned,
                            ai_out, sizeof(ai_out)) && *ai_out) {
+            /* Save raw LLM response for session logging */
+            strncpy(result->ai_output, ai_out, NAME_MAX_LEN - 1);
+            result->ai_output[NAME_MAX_LEN - 1] = '\0';
+
             strncpy(result->cleaned, ai_out, NAME_MAX_LEN - 1);
             result->cleaned[NAME_MAX_LEN - 1] = '\0';
             result->flags |= NAME_FLAG_WAS_AI;
