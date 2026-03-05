@@ -10,7 +10,7 @@
  * ====================================================================== */
 
 #define LLM_PORT         8765
-#define POLL_MAX_TRIES   120    /* 120 × 500 ms = 60 s max startup wait   */
+#define POLL_MAX_TRIES   240    /* 240 × 500 ms = 120 s max startup wait  */
 #define POLL_INTERVAL_MS 500    /* ms between /health polls               */
 
 /* =========================================================================
@@ -218,19 +218,32 @@ static void build_prompt(const char *raw, const char *cleaned,
     snprintf(buf, bufsz,
         "<|im_start|>system\n"
         "You clean US real estate property owner names for mailing labels.\n"
-        "Rules: fix typos; correct reversed Last-First to First Last; "
-        "keep abbreviations/initials uppercase when the original shows them "
-        "in ALL CAPS (e.g. KJ, JLS, HEB); preserve & between names; "
-        "remove incomplete trailing trust language.\n"
+        "Rules:\n"
+        "1. Fix first-name typos (Michae->Michael, Smtih->Smith).\n"
+        "2. The Cleaned field already shows Last-First-Initial names reordered "
+        "to First Initial Last — confirm the order or fix any typos.\n"
+        "3. If Original shows a word in ALL CAPS (KJ, JLS, HEB), preserve "
+        "those capitals in your output even if Cleaned lowercased them.\n"
+        "4. Preserve & between two names. Remove leftover trust noise.\n"
         "Reply with ONLY the corrected name on one line, nothing else.\n"
         "<|im_end|>\n"
+        /* Reversed name — already reordered by rules, AI confirms */
         "<|im_start|>user\n"
         "Original: JOHNSON MARY K\n"
-        "Cleaned: Johnson Mary K\n"
+        "Cleaned: Mary K Johnson\n"
         "<|im_end|>\n"
         "<|im_start|>assistant\n"
         "Mary K Johnson\n"
         "<|im_end|>\n"
+        /* Reversed name with typo — AI fixes the typo in reordered form */
+        "<|im_start|>user\n"
+        "Original: SMTIH DEREK M\n"
+        "Cleaned: Derek M Smtih\n"
+        "<|im_end|>\n"
+        "<|im_start|>assistant\n"
+        "Derek M Smith\n"
+        "<|im_end|>\n"
+        /* First-name typo */
         "<|im_start|>user\n"
         "Original: MICHAE WILLIAMS\n"
         "Cleaned: Michae Williams\n"
@@ -238,6 +251,7 @@ static void build_prompt(const char *raw, const char *cleaned,
         "<|im_start|>assistant\n"
         "Michael Williams\n"
         "<|im_end|>\n"
+        /* All-caps initials that title-case lowered */
         "<|im_start|>user\n"
         "Original: KJ POLLAK FAMILY TRUST\n"
         "Cleaned: Kj Pollak Family\n"
@@ -245,6 +259,15 @@ static void build_prompt(const char *raw, const char *cleaned,
         "<|im_start|>assistant\n"
         "KJ Pollak Family\n"
         "<|im_end|>\n"
+        /* All-caps abbreviation that title-case lowered */
+        "<|im_start|>user\n"
+        "Original: HEB REVOCABLE LIVING TRUST\n"
+        "Cleaned: Heb\n"
+        "<|im_end|>\n"
+        "<|im_start|>assistant\n"
+        "HEB\n"
+        "<|im_end|>\n"
+        /* Truncated trust noise appended to name */
         "<|im_start|>user\n"
         "Original: BARBARA TROILO SURVIIVO\n"
         "Cleaned: Barbara Troilo Surviivo\n"

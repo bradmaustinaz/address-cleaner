@@ -278,6 +278,53 @@ int name_clean(const char *raw, NameResult *result)
             }
         }
 
+        /* Deterministic Last-First-Initial reorder.
+         * When the cleaned name has no '&', is 2–5 words, and ends with
+         * a single alpha character (e.g. "SIRAKIS DEREK M"), it is in
+         * reversed Last First Initial format.  Move the first word to the
+         * end: "DEREK M SIRAKIS".  NEEDS_AI stays set so the AI still runs
+         * afterward to catch typos in the already-reordered form. */
+        if (!(result->flags & NAME_FLAG_EMPTY) &&
+            !strchr(result->cleaned, '&')) {
+            const char *ws[8], *we[8]; /* word start / end pointers */
+            int nw = 0;
+            const char *q2 = result->cleaned;
+            while (*q2 && nw < 8) {
+                while (*q2 && isspace((unsigned char)*q2)) q2++;
+                if (!*q2) break;
+                ws[nw] = q2;
+                while (*q2 && !isspace((unsigned char)*q2)) q2++;
+                we[nw] = q2;
+                nw++;
+            }
+            if (nw >= 2 && nw <= 5) {
+                size_t lwlen = (size_t)(we[nw-1] - ws[nw-1]);
+                if (lwlen == 1 && isalpha((unsigned char)ws[nw-1][0])) {
+                    /* Rebuild: words[1..nw-1] + " " + words[0] */
+                    char reord[NAME_MAX_LEN];
+                    size_t rpos = 0;
+                    for (int wi = 1; wi < nw; wi++) {
+                        if (wi > 1 && rpos < NAME_MAX_LEN - 1)
+                            reord[rpos++] = ' ';
+                        size_t wl = (size_t)(we[wi] - ws[wi]);
+                        if (rpos + wl < NAME_MAX_LEN - 1) {
+                            memcpy(reord + rpos, ws[wi], wl);
+                            rpos += wl;
+                        }
+                    }
+                    if (rpos < NAME_MAX_LEN - 1) reord[rpos++] = ' ';
+                    size_t w0l = (size_t)(we[0] - ws[0]);
+                    if (rpos + w0l < NAME_MAX_LEN - 1) {
+                        memcpy(reord + rpos, ws[0], w0l);
+                        rpos += w0l;
+                    }
+                    reord[rpos] = '\0';
+                    strncpy(result->cleaned, reord, NAME_MAX_LEN - 1);
+                    result->cleaned[NAME_MAX_LEN - 1] = '\0';
+                }
+            }
+        }
+
         /* Detect 2–4 char all-consonant words that title-case will render
          * incorrectly (e.g. "KJ" → "Kj", "JLS" → "Jls").  These are
          * initials or abbreviations that the AI can fix. */
