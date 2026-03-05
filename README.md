@@ -72,7 +72,7 @@ setup.bat
 The script detects your GPU, downloads the correct [llama.cpp](https://github.com/ggml-org/llama.cpp) release and the [Qwen2.5-1.5B](https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF) model (~940 MB), and places everything in an `ai\` subdirectory next to `nameclean.exe`. Safe to re-run — skips if already set up. To remove AI, just delete the `ai\` folder.
 
 **Status bar shows:**
-- `AI: Loading...` — server starting (up to ~60 sec on first run)
+- `AI: Loading...` — server starting (up to ~120 sec on first run)
 - `AI: Ready` — AI is active
 - `AI: No model` — sidecar files not found; rules engine only
 
@@ -135,7 +135,7 @@ Address Cleaner/
 
 ## Known limitations
 
-- **Reversed Last-First names** (`SIRAKIS DEREK M` → should be `Derek M Sirakis`) are detected and sent to AI, but correction depends on the model and is not guaranteed without AI running.
+- **Reversed Last-First names** (`SIRAKIS DEREK M` → `Derek M Sirakis`) are detected and reordered automatically; AI then checks for typos in the corrected form.
 - **Short entity abbreviations** without a vowel (`HEB`, `KJ`) are sent to AI; without AI they title-case incorrectly (e.g., `Heb`).
 - **Garbled truncated first names** (`LNDY`) are left as-is rather than guessed.
 
