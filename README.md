@@ -23,7 +23,7 @@ Raw property records contain trust language, legal boilerplate, and formatting t
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
-│                                        [Clear] [Copy] [Clean»] │
+│ [logo if present]              [Clear] [Copy] [Clean»]         │
 ├────────────────────────────┬───────────────────────────────────┤
 │ Paste Excel rows here      │ Cleaned output (read-only)        │
 │                            │                                   │
@@ -43,6 +43,25 @@ Raw property records contain trust language, legal boilerplate, and formatting t
 4. Click **Copy** — paste back into Excel (Ctrl+V)
 
 The input can be any column count. Only the first (name) column is modified; all other columns pass through unchanged.
+
+---
+
+## Logo (optional)
+
+Place a PNG file at `config\logo.png` next to `nameclean.exe` to display a custom logo:
+
+- Shown in the **splash screen** (top center, composited on white background)
+- Shown in the **main window toolbar** (left side, composited on the system button-face color — no white-box artifact)
+- Recommended size: **621 × 100 px** — any size is accepted and scaled to fit
+- Loaded once at startup via GDI+ (no runtime DLL dependency — loaded dynamically)
+- If the file is absent, the app runs normally with no logo
+
+```
+nameclean\
+  nameclean.exe
+  config\
+    logo.png    ← optional; any PNG, recommended 621×100 px
+```
 
 ---
 
@@ -69,10 +88,12 @@ The core rules engine handles ~95% of names. For edge cases — reversed names, 
 setup.bat
 ```
 
-The script detects your GPU, downloads the correct [llama.cpp](https://github.com/ggml-org/llama.cpp) release and the [Qwen2.5-3B](https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF) model (~2 GB), and places everything in an `ai\` subdirectory next to `nameclean.exe`. Safe to re-run — skips if already set up. To remove AI, just delete the `ai\` folder.
+The script downloads the correct [llama.cpp](https://github.com/ggml-org/llama.cpp) CPU release and the [Qwen2.5-3B-Instruct Q4_K_M](https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF) model (~2 GB), placing everything in an `ai\` subdirectory next to `nameclean.exe`. Safe to re-run — skips components already present. To remove AI, delete the `ai\` folder.
+
+**Startup:** On first launch after AI is installed, a splash screen appears while the model loads (60–90 seconds typical). The main window opens automatically when the model is ready. If startup times out or fails, the app falls back to rules-only mode.
 
 **Status bar shows:**
-- `AI: Loading...` — server starting (60–90 sec typical; splash screen shows during startup)
+- `AI: Loading...` — server starting; splash screen is visible
 - `AI: Ready` — AI is active
 - `AI: No model` — sidecar files not found; rules engine only
 
@@ -110,8 +131,9 @@ Rules run in priority order on an uppercase working copy:
 ```
 Address Cleaner/
 ├── src/
-│   ├── main.c      — WinMain, window creation, LLM startup
-│   ├── gui.c/h     — Win32 controls, layout, button handlers
+│   ├── main.c      — WinMain, window creation, LLM startup, splash trigger
+│   ├── gui.c/h     — Win32 controls, layout, button handlers, logo rendering
+│   ├── splash.c/h  — AI startup splash screen, PNG logo loader (GDI+)
 │   ├── tsv.c/h     — Tab-separated value parser (Excel paste format)
 │   ├── names.c/h   — Name pipeline: rules → title case → AI fallback
 │   ├── rules.c/h   — Pattern rules engine, flag bitmask definitions
@@ -123,10 +145,12 @@ Address Cleaner/
 └── README.md
 
 [runtime, not in repo]
+├── config\         — Optional configuration files
+│   └── logo.png    — Custom logo (621×100 px recommended; any PNG accepted)
 ├── ai\             — AI sidecar files (created by setup.bat)
 │   ├── llama-server.exe
 │   ├── ggml.dll / llama.dll
-│   └── *.gguf
+│   └── qwen2.5-3b-instruct-q4_k_m.gguf
 └── logs\           — Session logs (created automatically on first Clean)
     └── session_YYYYMMDD_HHMMSS.tsv
 ```

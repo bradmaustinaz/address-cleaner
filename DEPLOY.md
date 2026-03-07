@@ -1,4 +1,4 @@
-# Name Cleaner — Distribution & DLL Dependencies
+# Address Cleaner — Distribution & DLL Dependencies
 
 ## nameclean.exe — DLL requirements
 
@@ -31,10 +31,12 @@ The AI feature is entirely optional. Without it the rules engine still handles ~
 names correctly. With it, edge cases (reversed Last-First, typos, mangled words) are
 automatically fixed.
 
-### Option A — CPU-only build (recommended for easy distribution)
+### Option A — CPU-only build (default; recommended)
+
+`setup.bat` uses this option automatically. To set up manually:
 
 Download the **CPU** release of llama.cpp:
-<https://github.com/ggerganov/llama.cpp/releases>
+<https://github.com/ggml-org/llama.cpp/releases>
 File: `llama-<version>-bin-win-noavx-x64.zip` or `-avx2-x64.zip`
 
 Files to place in **`ai\` next to `nameclean.exe`**:
@@ -44,7 +46,7 @@ Files to place in **`ai\` next to `nameclean.exe`**:
 | `llama-server.exe` | Yes |
 | `ggml.dll` | Yes (if not statically linked in the release) |
 | `llama.dll` | Yes (if not statically linked in the release) |
-| `qwen2.5-1.5b-instruct-q4_k_m.gguf` | Yes (rename to anything `*.gguf`) |
+| `qwen2.5-3b-instruct-q4_k_m.gguf` | Yes (any `*.gguf` filename is accepted) |
 
 > Check the release zip — some llama.cpp releases ship `llama-server.exe` as a single
 > statically-linked binary with no DLL dependencies at all.
@@ -53,7 +55,11 @@ Files to place in **`ai\` next to `nameclean.exe`**:
 
 ---
 
-### Option B — CUDA / GPU-accelerated build
+### Option B — CUDA / GPU-accelerated build (manual setup only)
+
+> **Note:** `setup.bat` and the default launch flags use CPU-only mode (`--n-gpu-layers 0`).
+> GPU acceleration requires downloading a CUDA build of llama.cpp manually and editing
+> the `--n-gpu-layers` flag in `llm.c`.
 
 Download the **CUDA 12.x** release of llama.cpp:
 <https://github.com/ggerganov/llama.cpp/releases>
@@ -70,7 +76,7 @@ Files to place in **`ai\` next to `nameclean.exe`**:
 | `cudart64_12.dll` | CUDA runtime (see below) |
 | `cublas64_12.dll` | CUDA runtime (see below) |
 | `cublasLt64_12.dll` | CUDA runtime (see below) |
-| `qwen2.5-1.5b-instruct-q4_k_m.gguf` | HuggingFace (see below) |
+| `qwen2.5-3b-instruct-q4_k_m.gguf` | HuggingFace (see below) |
 
 **CUDA runtime DLLs** can be obtained from either:
 - The CUDA Toolkit 12.x installer (full install or runtime-only component), or
@@ -78,23 +84,26 @@ Files to place in **`ai\` next to `nameclean.exe`**:
 
 **Requirement:** NVIDIA driver ≥ 525 with CUDA 12 support (GTX 900 series or newer).
 
-The `-ngl 99` flag in the sidecar launch command offloads all model layers to the GPU.
-With a 1.5B Q4_K_M model (~1 GB), any 4GB+ VRAM card handles this comfortably.
+> **Note:** The app launches with `--n-gpu-layers 0` (CPU-only) by default. To enable GPU
+> offload, change this flag in `llm.c` and rebuild. The 3B Q4_K_M model (~2 GB) requires
+> approximately 3 GB VRAM for full GPU offload.
 
 ---
 
 ## Model file
 
-**Qwen2.5-1.5B-Instruct-Q4_K_M.gguf** (~940 MB)
+**Qwen2.5-3B-Instruct-Q4_K_M.gguf** (~2 GB)
 
 Download from HuggingFace:
 ```
-https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF
+https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF
 ```
-File: `qwen2.5-1.5b-instruct-q4_k_m.gguf`
+File: `qwen2.5-3b-instruct-q4_k_m.gguf`
 
 Place it in the **`ai\` folder** next to `nameclean.exe`. The app discovers any `*.gguf` file
 in that directory automatically — filename does not matter.
+
+`setup.bat` handles this download automatically.
 
 ---
 
@@ -103,6 +112,10 @@ in that directory automatically — filename does not matter.
 ```
 nameclean\
   nameclean.exe                              ← main app (no extra DLLs needed)
+
+  [optional — custom logo]
+  config\
+    logo.png                                 ← PNG logo, 621×100 px recommended
 
   [optional — AI features, all in ai\ subfolder]
   ai\
@@ -113,7 +126,7 @@ nameclean\
     cudart64_12.dll                          ← CUDA build only
     cublas64_12.dll                          ← CUDA build only
     cublasLt64_12.dll                        ← CUDA build only
-    qwen2.5-1.5b-instruct-q4_k_m.gguf      ← AI model (~940 MB)
+    qwen2.5-3b-instruct-q4_k_m.gguf        ← AI model (~2 GB)
 ```
 
 ---
