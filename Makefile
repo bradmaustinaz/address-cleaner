@@ -19,13 +19,14 @@ SRCDIR = src
 TARGET = nameclean.exe
 
 SRCS = \
-  $(SRCDIR)/main.c  \
-  $(SRCDIR)/gui.c   \
-  $(SRCDIR)/tsv.c   \
-  $(SRCDIR)/names.c \
-  $(SRCDIR)/rules.c \
-  $(SRCDIR)/llm.c   \
-  $(SRCDIR)/slog.c
+  $(SRCDIR)/main.c   \
+  $(SRCDIR)/gui.c    \
+  $(SRCDIR)/tsv.c    \
+  $(SRCDIR)/names.c  \
+  $(SRCDIR)/rules.c  \
+  $(SRCDIR)/llm.c    \
+  $(SRCDIR)/slog.c   \
+  $(SRCDIR)/splash.c
 
 OBJS = $(SRCS:.c=.o)
 
@@ -44,8 +45,9 @@ clean:
 	-del /f /q $(subst /,\,$(OBJS)) $(TARGET) 2>NUL
 
 # Header dependencies
-$(SRCDIR)/main.o:   $(SRCDIR)/gui.h $(SRCDIR)/llm.h
-$(SRCDIR)/gui.o:    $(SRCDIR)/gui.h $(SRCDIR)/tsv.h $(SRCDIR)/names.h $(SRCDIR)/rules.h $(SRCDIR)/llm.h $(SRCDIR)/slog.h
+$(SRCDIR)/main.o:   $(SRCDIR)/gui.h $(SRCDIR)/llm.h $(SRCDIR)/splash.h
+$(SRCDIR)/gui.o:    $(SRCDIR)/gui.h $(SRCDIR)/tsv.h $(SRCDIR)/names.h $(SRCDIR)/rules.h $(SRCDIR)/llm.h $(SRCDIR)/slog.h $(SRCDIR)/splash.h
+$(SRCDIR)/splash.o: $(SRCDIR)/splash.h $(SRCDIR)/llm.h
 $(SRCDIR)/tsv.o:    $(SRCDIR)/tsv.h
 $(SRCDIR)/names.o:  $(SRCDIR)/names.h $(SRCDIR)/rules.h $(SRCDIR)/llm.h
 $(SRCDIR)/rules.o:  $(SRCDIR)/rules.h

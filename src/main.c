@@ -20,6 +20,7 @@
 #include <commctrl.h>
 #include "gui.h"
 #include "llm.h"
+#include "splash.h"
 
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev,
                    LPSTR cmdLine, int nShow)
@@ -29,8 +30,11 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev,
     (void)nShow;
 
     /* Initialize common controls (status bar, etc.) */
-    INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_BAR_CLASSES };
+    INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_BAR_CLASSES | ICC_PROGRESS_CLASS };
     InitCommonControlsEx(&icc);
+
+    /* Load logo before creating the main window so WM_CREATE can fetch it */
+    splash_load_logo();
 
     HWND hwnd = gui_create_window(hInst);
     if (!hwnd) {
@@ -42,6 +46,12 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev,
 
     /* Start LLM sidecar in background (no-op if llama-server.exe not found) */
     llm_init();
+
+    /* If the sidecar is loading, show a splash screen while it starts up.
+     * If no model was found, llm_init() already set state to -1 so we skip. */
+    if (llm_is_loading()) {
+        splash_run(hInst);
+    }
 
     ShowWindow(hwnd, SW_SHOWDEFAULT);
     UpdateWindow(hwnd);

@@ -9,7 +9,6 @@
  * ---------------------------------------------------------------------- */
 #define IDC_INPUT        101   /* Multiline input edit (paste from Excel)  */
 #define IDC_OUTPUT       102   /* Multiline output edit (read-only)         */
-#define IDC_APPEND_NOTES 103   /* "Append notes column" checkbox            */
 #define IDC_BTN_CLEAN    104   /* Primary "Clean" button                    */
 #define IDC_BTN_COPY     105   /* "Copy Output" button                      */
 #define IDC_BTN_CLEAR    106   /* "Clear" button                            */

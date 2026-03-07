@@ -13,8 +13,8 @@
  * The app degrades gracefully — if no model is found, llm_is_ready()
  * returns 0 and the rules-cleaned result is kept as-is.
  *
- * Recommended model: qwen2.5-1.5b-instruct-q4_k_m.gguf  (~1 GB)
- * Download llama-server.exe (CUDA build) from the llama.cpp releases page.
+ * Recommended model: qwen2.5-3b-instruct-q4_k_m.gguf  (~2 GB)
+ * Download llama-server.exe from the llama.cpp releases page.
  */
 
 /*
@@ -44,6 +44,11 @@ int llm_is_ready(void);
  */
 int llm_clean_name(const char *raw, const char *rules_result,
                    char *out, size_t outlen);
+
+/*
+ * Returns 1 while the sidecar startup thread is still running (state == 0).
+ */
+int llm_is_loading(void);
 
 /*
  * Human-readable AI status string for the status bar.

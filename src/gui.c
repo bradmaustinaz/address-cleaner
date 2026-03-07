@@ -10,13 +10,13 @@
 #include "rules.h"
 #include "llm.h"
 #include "slog.h"
+#include "splash.h"
 
 /* =========================================================================
  * Layout constants
  * ====================================================================== */
 #define MARGIN      8
 #define TOOLBAR_H   38
-#define CTRL_H      22
 #define BTN_H       26
 #define BTN_W       88
 
@@ -28,10 +28,14 @@
  * ====================================================================== */
 static HWND g_hwnd;
 static HWND g_hInput, g_hOutput;
-static HWND g_hAppendNotes;
 static HWND g_hBtnClean, g_hBtnCopy, g_hBtnClear;
 static HWND g_hStatus;
 static HFONT g_hGuiFont, g_hMonoFont;
+
+/* Logo (optional — loaded from config\logo.png by splash_load_logo) */
+static HBITMAP g_hLogoGui  = NULL;
+static int     g_logo_src_w = 0;
+static int     g_logo_src_h = 0;
 
 /* =========================================================================
  * Helpers
@@ -63,18 +67,12 @@ static void setup_status_parts(void)
     update_ai_status();
 }
 
-static int checkbox_checked(HWND h)
-{
-    return SendMessage(h, BM_GETCHECK, 0, 0) == BST_CHECKED;
-}
-
 /* =========================================================================
  * Core clean operation
  * ====================================================================== */
 
 static void do_clean(void)
 {
-    int append_notes = checkbox_checked(g_hAppendNotes);
 
     /* --- Get input text ------------------------------------------------ */
     int input_len = GetWindowTextLength(g_hInput);
@@ -151,14 +149,6 @@ static void do_clean(void)
             out_pos += fl;
         }
 
-        /* Optional notes column */
-        if (append_notes) {
-            out_buf[out_pos++] = '\t';
-            size_t nl = strlen(nr.notes);
-            memcpy(out_buf + out_pos, nr.notes, nl);
-            out_pos += nl;
-        }
-
         /* Windows line ending for correct Excel paste */
         out_buf[out_pos++] = '\r';
         out_buf[out_pos++] = '\n';
@@ -228,7 +218,7 @@ static void copy_to_clipboard(void)
  * Layout
  *
  *  ┌─────────────────────────────────────────────────────┐
- *  │ [Append notes □]         [Clear] [Copy] [Clean »]  │  toolbar
+ *  │                          [Clear] [Copy] [Clean »]  │  toolbar
  *  ├──────────────────────────┬──────────────────────────┤
  *  │  Input (paste here)      │  Output (read-only)      │
  *  │                          │                          │
@@ -252,11 +242,7 @@ static void layout_controls(void)
 
     /* Toolbar at top */
     int toolbar_y = MARGIN;
-    int ty = toolbar_y + (TOOLBAR_H - CTRL_H) / 2;
     int btn_y = toolbar_y + (TOOLBAR_H - BTN_H) / 2;
-
-    /* Checkbox on the left */
-    MoveWindow(g_hAppendNotes, MARGIN, ty, 148, CTRL_H, TRUE);
 
     /* Buttons flush right */
     int bx = W - MARGIN - BTN_W;
@@ -304,11 +290,6 @@ static void create_controls(HINSTANCE hInst)
     SendMessage(g_hInput,  EM_LIMITTEXT, 0, 0);
     SendMessage(g_hOutput, EM_LIMITTEXT, 0, 0);
 
-    g_hAppendNotes = CreateWindowEx(
-        0, "BUTTON", "Append notes column",
-        WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-        0, 0, 0, 0, g_hwnd, (HMENU)IDC_APPEND_NOTES, hInst, NULL);
-
     g_hBtnClean = CreateWindowEx(
         0, "BUTTON", "Clean  \xBB",
         WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
@@ -330,17 +311,17 @@ static void create_controls(HINSTANCE hInst)
         0, 0, 0, 0, g_hwnd, (HMENU)IDC_STATUS, hInst, NULL);
 
     /* Fonts */
-    SendMessage(g_hInput,       WM_SETFONT, (WPARAM)g_hMonoFont, FALSE);
-    SendMessage(g_hOutput,      WM_SETFONT, (WPARAM)g_hMonoFont, FALSE);
-    SendMessage(g_hAppendNotes, WM_SETFONT, (WPARAM)g_hGuiFont,  FALSE);
-    SendMessage(g_hBtnClean,    WM_SETFONT, (WPARAM)g_hGuiFont,  FALSE);
-    SendMessage(g_hBtnCopy,     WM_SETFONT, (WPARAM)g_hGuiFont,  FALSE);
-    SendMessage(g_hBtnClear,    WM_SETFONT, (WPARAM)g_hGuiFont,  FALSE);
-
-    SendMessage(g_hAppendNotes, BM_SETCHECK, BST_CHECKED, 0);
+    SendMessage(g_hInput,    WM_SETFONT, (WPARAM)g_hMonoFont, FALSE);
+    SendMessage(g_hOutput,   WM_SETFONT, (WPARAM)g_hMonoFont, FALSE);
+    SendMessage(g_hBtnClean, WM_SETFONT, (WPARAM)g_hGuiFont,  FALSE);
+    SendMessage(g_hBtnCopy,  WM_SETFONT, (WPARAM)g_hGuiFont,  FALSE);
+    SendMessage(g_hBtnClear, WM_SETFONT, (WPARAM)g_hGuiFont,  FALSE);
 
     set_status("Paste names in the left pane, then click Clean.");
     update_ai_status();
+
+    /* Grab logo composited against COLOR_BTNFACE for correct rendering on the toolbar */
+    g_hLogoGui = splash_get_logo_for_window(&g_logo_src_w, &g_logo_src_h);
 }
 
 /* =========================================================================
@@ -363,7 +344,7 @@ LRESULT CALLBACK gui_wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         if (wp == TIMER_AI_ID) {
             update_ai_status();
             /* Stop polling once the state is final (ready or no model) */
-            if (llm_is_ready() || llm_status_str()[3] == 'N')
+            if (!llm_is_loading())
                 KillTimer(hwnd, TIMER_AI_ID);
         }
         return 0;
@@ -390,6 +371,31 @@ LRESULT CALLBACK gui_wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             break;
         }
         return 0;
+
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hwnd, &ps);
+        if (g_hLogoGui && g_logo_src_w > 0 && g_logo_src_h > 0) {
+            /* Scale to fit within toolbar height, max 250px wide */
+            int max_h = TOOLBAR_H - 8;
+            int max_w = 250;
+            int dh = max_h;
+            int dw = MulDiv(g_logo_src_w, max_h, g_logo_src_h);
+            if (dw > max_w) { dh = MulDiv(dh, max_w, dw); dw = max_w; }
+            int lx = MARGIN;
+            int ly = MARGIN + (TOOLBAR_H - dh) / 2;
+
+            HDC hdcMem = CreateCompatibleDC(hdc);
+            HBITMAP hOld = (HBITMAP)SelectObject(hdcMem, g_hLogoGui);
+            SetStretchBltMode(hdc, HALFTONE);
+            StretchBlt(hdc, lx, ly, dw, dh,
+                       hdcMem, 0, 0, g_logo_src_w, g_logo_src_h, SRCCOPY);
+            SelectObject(hdcMem, hOld);
+            DeleteDC(hdcMem);
+        }
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
 
     case WM_CTLCOLORSTATIC:
         SetBkColor((HDC)wp, GetSysColor(COLOR_BTNFACE));

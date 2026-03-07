@@ -23,7 +23,7 @@ Raw property records contain trust language, legal boilerplate, and formatting t
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
-│  [Append notes □]                      [Clear] [Copy] [Clean»] │
+│                                        [Clear] [Copy] [Clean»] │
 ├────────────────────────────┬───────────────────────────────────┤
 │ Paste Excel rows here      │ Cleaned output (read-only)        │
 │                            │                                   │
@@ -69,10 +69,10 @@ The core rules engine handles ~95% of names. For edge cases — reversed names, 
 setup.bat
 ```
 
-The script detects your GPU, downloads the correct [llama.cpp](https://github.com/ggml-org/llama.cpp) release and the [Qwen2.5-1.5B](https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF) model (~940 MB), and places everything in an `ai\` subdirectory next to `nameclean.exe`. Safe to re-run — skips if already set up. To remove AI, just delete the `ai\` folder.
+The script detects your GPU, downloads the correct [llama.cpp](https://github.com/ggml-org/llama.cpp) release and the [Qwen2.5-3B](https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF) model (~2 GB), and places everything in an `ai\` subdirectory next to `nameclean.exe`. Safe to re-run — skips if already set up. To remove AI, just delete the `ai\` folder.
 
 **Status bar shows:**
-- `AI: Loading...` — server starting (up to ~120 sec on first run)
+- `AI: Loading...` — server starting (60–90 sec typical; splash screen shows during startup)
 - `AI: Ready` — AI is active
 - `AI: No model` — sidecar files not found; rules engine only
 
@@ -145,4 +145,4 @@ Address Cleaner/
 
 - Windows 10 or 11 (64-bit)
 - MinGW-w64 GCC to build from source
-- AI features: ~2 GB disk space; NVIDIA GPU optional (CPU works fine)
+- AI features: ~2.5 GB disk space; runs CPU-only (no GPU required)

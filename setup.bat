@@ -172,13 +172,13 @@ for %%G in (ai\*.gguf) do set HAS_MODEL=1
 
 if "!HAS_MODEL!"=="0" (
     echo.
-    echo Downloading Qwen2.5-1.5B model  ~940 MB, please wait...
+    echo Downloading Qwen2.5-3B model  ~2 GB, please wait...
     curl.exe -L --progress-bar ^
-        -o "ai\qwen2.5-1.5b-instruct-q4_k_m.gguf" ^
-        "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf"
+        -o "ai\qwen2.5-3b-instruct-q4_k_m.gguf" ^
+        "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf"
     if %errorlevel% neq 0 (
         echo ERROR: Model download failed.
-        echo Download manually: https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF
+        echo Download manually: https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF
         pause & exit /b 1
     )
 ) else (

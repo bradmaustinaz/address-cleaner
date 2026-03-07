@@ -332,9 +332,9 @@ static DWORD WINAPI startup_thread(LPVOID param)
         "\"%s\""
         " --model \"%s\""
         " --port %d"
-        " --ctx-size 1024"
+        " --ctx-size 2048"
         " --n-predict 48"
-        " -ngl 99"       /* offload all layers to GPU */
+        " --n-gpu-layers 0"  /* CPU-only: safe on work PCs without GPU drivers */
         " --threads 4"
         " --log-disable",
         server_exe, g_model_path, LLM_PORT);
@@ -436,6 +436,11 @@ void llm_shutdown(void)
 int llm_is_ready(void)
 {
     return (int)g_state == 1;
+}
+
+int llm_is_loading(void)
+{
+    return (int)g_state == 0;
 }
 
 const char *llm_status_str(void)
