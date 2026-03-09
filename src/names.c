@@ -179,8 +179,11 @@ static void apply_title_case(char *s)
             if (wlen > 2 && orig[0]=='M' && orig[1]=='C' && isalpha((unsigned char)orig[2]))
                 word_start[2] = (char)toupper((unsigned char)word_start[2]);
 
-            /* Mac prefix: MacDonald — only when 4th char was uppercase in orig */
-            if (wlen > 3 && orig[0]=='M' && orig[1]=='A' && orig[2]=='C'
+            /* Mac prefix: MacDonald — only when 4th char was uppercase in orig.
+             * Require wlen >= 6 to avoid false positives on common words
+             * like MACON (5), MACE (4), MACHO (5), MACRO (5). Shortest
+             * real Mac-surname: MacKay (6). */
+            if (wlen > 5 && orig[0]=='M' && orig[1]=='A' && orig[2]=='C'
                          && isupper((unsigned char)orig[3]))
                 word_start[3] = (char)toupper((unsigned char)word_start[3]);
 
@@ -244,7 +247,12 @@ int name_clean(const char *raw, NameResult *result)
         return -1;
     }
 
-    memcpy(result->cleaned, start, NAME_MAX_LEN - 1);
+    {
+        size_t slen = strlen(start);
+        if (slen >= NAME_MAX_LEN) slen = NAME_MAX_LEN - 1;
+        memcpy(result->cleaned, start, slen);
+        result->cleaned[slen] = '\0';
+    }
     result->flags = rules_apply(result->cleaned, NAME_MAX_LEN);
 
     if (!(result->flags & NAME_FLAG_EMPTY)) {
@@ -264,7 +272,7 @@ int name_clean(const char *raw, NameResult *result)
             /* Short single-word results (≤4 chars, e.g. "HEB", "KJ") are
              * likely a name or initials — let the AI decide the correct
              * form rather than blindly reverting to trust language. */
-            if (strlen(result->cleaned) <= 4) {
+            if (strlen(result->cleaned) <= 3) {
                 result->flags |= NAME_FLAG_NEEDS_AI;
             } else {
                 /* Longer single words (e.g. "MAXWELL") are surnames —

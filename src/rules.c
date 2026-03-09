@@ -180,6 +180,7 @@ static int strip_co(char *s, int *flags)
  * ====================================================================== */
 
 static const char *date_keywords[] = {
+    "AS AMENDED", "AMENDED AND RESTATED", "AMENDED", "RESTATED",
     "DATED", "DTD", "U/D/T", "UTD", "U/T/D",
     "ESTABLISHED", "CREATED",
     NULL
@@ -406,8 +407,12 @@ typedef struct { const char *pattern; int keep_prefix; } TrustSuffix;
 
 static const TrustSuffix trust_suffixes[] = {
     /* Most specific first, keep_prefix=0 means remove entirely */
+    { "AMENDED AND RESTATED TRUST",          0 },
+    { "RESTATEMENT OF TRUST",                0 },
     { "REVOCABLE LIVING TRUST",              0 },
     { "IRREVOCABLE LIVING TRUST",            0 },
+    { "LEGACY LIVING TRUST",                 0 },
+    { "HERITAGE LIVING TRUST",               0 },
     { "REVOCABLE INTER VIVOS TRUST",         0 },
     { "IRREVOCABLE INTER VIVOS TRUST",       0 },
     { "INTER VIVOS TRUST",                   0 },
@@ -417,12 +422,18 @@ static const TrustSuffix trust_suffixes[] = {
     { "GENERATION SKIPPING TRUST",           0 },
     { "GENERATION-SKIPPING TRUST",           0 },
     { "ASSET PROTECTION TRUST",              0 },
+    { "SUPPLEMENTAL NEEDS TRUST",            0 },
     { "SPECIAL NEEDS TRUST",                 0 },
     { "DISCRETIONARY TRUST",                 0 },
     { "SPENDTHRIFT TRUST",                   0 },
     { "TESTAMENTARY TRUST",                  0 },
     { "IRREVOCABLE TRUST",                   0 },
     { "REVOCABLE TRUST",                     0 },
+    { "SURVIVORS TRUST",                     0 },
+    { "SURVIVOR'S TRUST",                    0 },
+    { "EXEMPT TRUST",                        0 },
+    { "LEGACY TRUST",                        0 },
+    { "HERITAGE TRUST",                      0 },
     { "LIVING TRUST",                        0 },
     /* FAMILY TRUST: keep "FAMILY", strip " TRUST" */
     { "FAMILY TRUST",                        6 }, /* strlen("FAMILY") == 6 */
@@ -433,6 +444,13 @@ static const TrustSuffix trust_suffixes[] = {
     { "CREDIT SHELTER TRUST",               0 },
     { "QTIP TRUST",                          0 },
     { "DYNASTY TRUST",                       0 },
+    /* Abbreviated trust types (common estate planning acronyms) */
+    { "GRAT",                                0 },
+    { "GRUT",                                0 },
+    { "CRUT",                                0 },
+    { "CRAT",                                0 },
+    { "QPRT",                                0 },
+    { "ILIT",                                0 },
     /* Catch-all — must be last */
     { "TRUST",                               0 },
     { NULL, 0 }
@@ -440,27 +458,42 @@ static const TrustSuffix trust_suffixes[] = {
 
 static int strip_trust_suffix(char *s)
 {
-    for (int i = 0; trust_suffixes[i].pattern; i++) {
-        char *p = find_word(s, trust_suffixes[i].pattern);
-        if (p) {
+    int changed = 0;
+    int safety = 10;  /* prevent infinite loops on pathological input */
+
+    while (safety-- > 0) {
+        int found = 0;
+        for (int i = 0; trust_suffixes[i].pattern; i++) {
+            char *p = find_word(s, trust_suffixes[i].pattern);
+            if (!p) continue;
+
+            size_t pattern_len = strlen(trust_suffixes[i].pattern);
             if (trust_suffixes[i].keep_prefix > 0) {
                 /* Erase only the suffix portion (e.g. " TRUST" from
-                 * "FAMILY TRUST"), preserving anything that follows
-                 * (e.g. "& co-owner after the trust name").
-                 * Old behaviour null-terminated here which silently
-                 * dropped everything past the match. */
+                 * "FAMILY TRUST"), preserving anything that follows. */
                 int kp = trust_suffixes[i].keep_prefix;
-                size_t pattern_len = strlen(trust_suffixes[i].pattern);
                 str_erase(s, (size_t)(p - s) + (size_t)kp,
                           pattern_len - (size_t)kp);
             } else {
-                *p = '\0';
+                /* Erase the pattern and any preceding whitespace,
+                 * preserving content that follows (e.g. "& co-owner").
+                 * This is safer than null-termination which silently
+                 * dropped everything past the match. */
+                char *erase_start = p;
+                while (erase_start > s &&
+                       isspace((unsigned char)*(erase_start - 1)))
+                    erase_start--;
+                size_t erase_len = (size_t)(p - erase_start) + pattern_len;
+                str_erase(s, (size_t)(erase_start - s), erase_len);
             }
             rtrim(s);
-            return 1;
+            found = 1;
+            changed = 1;
+            break;  /* restart scan — removal may expose new matches */
         }
+        if (!found) break;
     }
-    return 0;
+    return changed;
 }
 
 /* =========================================================================
@@ -528,133 +561,130 @@ static int strip_stale_family(char *s)
  * Phase 4: Standalone LIVING at end of 3+ word name
  * ====================================================================== */
 
+/*
+ * Two-tier trust-vocabulary table (used by strip_truncated_suffix).
+ *
+ * Instead of listing every possible truncation of every compound trust
+ * phrase (~170 patterns), we define individual vocabulary words and strip
+ * them iteratively from the end of the string, right-to-left.
+ *
+ * Tier 1 ("anchor") words are NEVER legitimate as the last word of a
+ * person or business name — they are always stripped when found at the
+ * end of the string.
+ *
+ * Tier 2 ("context") words COULD be surnames (e.g., Land) so they are
+ * only stripped after a Tier 1 word has already been removed.
+ *
+ * Each entry stores the full word and a minimum prefix length for
+ * truncated matching.  If trunc_only is set, the full word is NOT
+ * matched here (it is handled by another rule in the pipeline).
+ */
+
+typedef struct {
+    const char *word;
+    int         wlen;       /* strlen(word), cached              */
+    int         min_prefix; /* minimum chars for truncated match */
+    int         trunc_only; /* 1 = skip full-word match          */
+    int         tier;       /* 1 = anchor, 2 = context           */
+} TrustVocab;
+
+static const TrustVocab trunc_vocab[] = {
+    /* ── Tier 1: anchor words (always safe to strip) ──────────────
+     *
+     * These words NEVER appear as legitimate person/business name
+     * endings in real-estate ownership records.  They are always
+     * stripped when found as the last word (or truncated prefix
+     * thereof) in the string. */
+
+    /* Core trust modifiers */
+    {"IRREVOCABLE",    11, 5, 0, 1},
+    {"REVOCABLE",       9, 5, 0, 1},
+    {"CHARITABLE",     10, 6, 0, 1},
+    {"TESTAMENTARY",   12, 6, 0, 1},
+    {"SPENDTHRIFT",    11, 6, 0, 1},
+    {"DISCRETIONARY",  13, 8, 0, 1},
+    {"UNITRUST",        8, 5, 0, 1},
+    {"QTIP",            4, 4, 0, 1},
+    {"VIVOS",           5, 3, 0, 1},
+    {"GRANTOR",         7, 6, 0, 1},
+    {"QUALIFIED",       9, 5, 0, 1},
+    {"DYNASTY",         7, 6, 0, 1},
+    {"MARITAL",         7, 7, 0, 1},
+    {"BYPASS",          6, 5, 0, 1},
+
+    /* Compound-phrase components — never surnames */
+    {"INTER",           5, 5, 0, 1},
+    {"REMAINDER",       9, 6, 0, 1},
+    {"GENERATION",     10, 6, 0, 1},
+    {"SKIPPING",        8, 5, 0, 1},
+    {"PERSONAL",        8, 5, 0, 1},
+    {"RESIDENCE",       9, 6, 0, 1},
+    {"ASSET",           5, 5, 0, 1},
+    {"PROTECTION",     10, 6, 0, 1},
+    {"SPECIAL",         7, 7, 0, 1},
+    {"NEEDS",           5, 5, 0, 1},
+    {"CREDIT",          6, 6, 0, 1},
+    {"SHELTER",         7, 5, 0, 1},
+
+    /* Trust descriptor words — never surnames */
+    {"LEGACY",          6, 6, 0, 1},
+    {"HERITAGE",        8, 6, 0, 1},
+    {"EXEMPT",          6, 6, 0, 1},
+
+    /* TRUST / TRUSTEE — full words handled by strip_trust_suffix
+     * and strip_trustee, so only match truncated forms here. */
+    {"TRUST",           5, 3, 1, 1},  /* TRU, TRUS           */
+    {"TRUSTEE",         7, 6, 1, 1},  /* TRUSTE              */
+
+    /* LIVING — truncated forms LIVI/LIVIN are tier 1 (never names).
+     * LIV (3 chars) could be a Scandinavian name so min_prefix=4.
+     * Full "LIVING" has its own special-case handler below. */
+    {"LIVING",          6, 4, 1, 1},
+
+    /* ── Tier 2: context words (only strip after a tier-1 match) ──
+     *
+     * These words COULD appear in legitimate business names (e.g.,
+     * "COMMUNITY BANK LLC") so they are only stripped once trust
+     * context is established by a tier-1 match. */
+
+    /* FAMILY / LAND — full words handled elsewhere (strip_trust_suffix,
+     * strip_stale_family), so only truncated forms match here. */
+    {"FAMILY",          6, 3, 1, 2},
+    {"LAND",            4, 4, 1, 2},
+
+    /* Less common trust types that overlap with business vocabulary */
+    {"RETAINED",        8, 6, 0, 2},
+    {"ANNUITY",         7, 6, 0, 2},
+    {"SUPPLEMENTAL",   12, 6, 0, 2},
+    {"INSURANCE",       9, 6, 0, 2},
+    {"NOMINEE",         7, 5, 0, 2},
+    {"COMMUNITY",       9, 6, 0, 2},
+    {"PROPERTY",        8, 6, 0, 2},
+    {"HOMESTEAD",       9, 6, 0, 2},
+    {"BLIND",           5, 5, 0, 2},
+    {"EDUCATION",       9, 6, 0, 2},
+    {"MEDICAID",        8, 6, 0, 2},
+
+    {NULL, 0, 0, 0, 0}
+};
+
+/*
+ * is_trunc_vocab_prefix: returns 1 if the word (of length n) is a prefix
+ * of ANY trust vocabulary word.  Used by Phase 2 to verify that
+ * short trailing fragments are plausibly truncated trust words.
+ */
+static int is_trunc_vocab_prefix(const char *w, size_t n)
+{
+    for (int i = 0; trunc_vocab[i].word; i++) {
+        if ((int)n <= trunc_vocab[i].wlen &&
+            icase_ncmp(w, trunc_vocab[i].word, n) == 0)
+            return 1;
+    }
+    return 0;
+}
+
 static int strip_truncated_suffix(char *s)
 {
-    /*
-     * Two-tier trust-vocabulary table.
-     *
-     * Instead of listing every possible truncation of every compound trust
-     * phrase (~170 patterns), we define individual vocabulary words and strip
-     * them iteratively from the end of the string, right-to-left.
-     *
-     * Tier 1 ("anchor") words are NEVER legitimate as the last word of a
-     * person or business name — they are always stripped when found at the
-     * end of the string.
-     *
-     * Tier 2 ("context") words COULD be surnames (e.g., Shelter, Land) so
-     * they are only stripped after a Tier 1 word has already been removed
-     * in the current pass (i.e., we are in a "trust context").
-     *
-     * Each entry stores the full word and a minimum prefix length for
-     * truncated matching.  If trunc_only is set, the full word is NOT
-     * matched here (it is handled by another rule in the pipeline).
-     *
-     * The iterative approach handles ANY combination of trust vocabulary
-     * at ANY truncation point automatically — e.g.
-     *   "SMITH IRREVOCABLE INTER VIVOS TRUS"
-     *   → strip TRUS (prefix of TRUST) → SMITH IRREVOCABLE INTER VIVOS
-     *   → strip VIVOS                  → SMITH IRREVOCABLE INTER
-     *   → strip INTER                  → SMITH IRREVOCABLE
-     *   → strip IRREVOCABLE            → SMITH
-     */
-
-    typedef struct {
-        const char *word;
-        int         wlen;       /* strlen(word), cached              */
-        int         min_prefix; /* minimum chars for truncated match */
-        int         trunc_only; /* 1 = skip full-word match          */
-        int         tier;       /* 1 = anchor, 2 = context           */
-    } TrustVocab;
-
-    static const TrustVocab vocab[] = {
-        /* ── Tier 1: anchor words (always safe to strip) ──────────────
-         *
-         * These words NEVER appear as legitimate person/business name
-         * endings in real-estate ownership records.  They are always
-         * stripped when found as the last word (or truncated prefix
-         * thereof) in the string. */
-
-        /* Core trust modifiers */
-        {"IRREVOCABLE",    11, 5, 0, 1},
-        {"REVOCABLE",       9, 5, 0, 1},
-        {"CHARITABLE",     10, 6, 0, 1},
-        {"TESTAMENTARY",   12, 6, 0, 1},
-        {"SPENDTHRIFT",    11, 6, 0, 1},
-        {"DISCRETIONARY",  13, 8, 0, 1},
-        {"UNITRUST",        8, 5, 0, 1},
-        {"QTIP",            4, 4, 0, 1},
-        {"VIVOS",           5, 3, 0, 1},
-        {"GRANTOR",         7, 6, 0, 1},
-        {"QUALIFIED",       9, 5, 0, 1},
-        {"DYNASTY",         7, 6, 0, 1},
-        {"MARITAL",         7, 7, 0, 1},
-        {"BYPASS",          6, 5, 0, 1},
-
-        /* Compound-phrase components — never surnames */
-        {"INTER",           5, 5, 0, 1},
-        {"REMAINDER",       9, 6, 0, 1},
-        {"GENERATION",     10, 6, 0, 1},
-        {"SKIPPING",        8, 5, 0, 1},
-        {"PERSONAL",        8, 5, 0, 1},
-        {"RESIDENCE",       9, 6, 0, 1},
-        {"ASSET",           5, 5, 0, 1},
-        {"PROTECTION",     10, 6, 0, 1},
-        {"SPECIAL",         7, 7, 0, 1},
-        {"NEEDS",           5, 5, 0, 1},
-        {"CREDIT",          6, 6, 0, 1},
-        {"SHELTER",         7, 5, 0, 1},
-
-        /* TRUST / TRUSTEE — full words handled by strip_trust_suffix
-         * and strip_trustee, so only match truncated forms here. */
-        {"TRUST",           5, 3, 1, 1},  /* TRU, TRUS           */
-        {"TRUSTEE",         7, 6, 1, 1},  /* TRUSTE              */
-
-        /* LIVING — truncated forms LIVI/LIVIN are tier 1 (never names).
-         * LIV (3 chars) could be a Scandinavian name so min_prefix=4.
-         * Full "LIVING" has its own special-case handler below. */
-        {"LIVING",          6, 4, 1, 1},
-
-        /* ── Tier 2: context words (only strip after a tier-1 match) ──
-         *
-         * These words COULD appear in legitimate business names (e.g.,
-         * "COMMUNITY BANK LLC") so they are only stripped once trust
-         * context is established by a tier-1 match. */
-
-        /* FAMILY / LAND — full words handled elsewhere (strip_trust_suffix,
-         * strip_stale_family), so only truncated forms match here. */
-        {"FAMILY",          6, 3, 1, 2},
-        {"LAND",            4, 4, 1, 2},
-
-        /* Less common trust types that overlap with business vocabulary */
-        {"RETAINED",        8, 6, 0, 2},
-        {"ANNUITY",         7, 6, 0, 2},
-        {"SUPPLEMENTAL",   12, 6, 0, 2},
-        {"INSURANCE",       9, 6, 0, 2},
-        {"NOMINEE",         7, 5, 0, 2},
-        {"COMMUNITY",       9, 6, 0, 2},
-        {"PROPERTY",        8, 6, 0, 2},
-        {"HOMESTEAD",       9, 6, 0, 2},
-        {"BLIND",           5, 5, 0, 2},
-        {"EDUCATION",       9, 6, 0, 2},
-        {"MEDICAID",        8, 6, 0, 2},
-
-        {NULL, 0, 0, 0, 0}
-    };
-
-    /*
-     * is_vocab_prefix: returns 1 if the word (of length n) is a prefix
-     * of ANY trust vocabulary word.  Used by Phase 2 to verify that
-     * short trailing fragments are plausibly truncated trust words.
-     */
-    int is_vocab_prefix(const char *w, size_t n) {
-        for (int i = 0; vocab[i].word; i++) {
-            if ((int)n <= vocab[i].wlen &&
-                icase_ncmp(w, vocab[i].word, n) == 0)
-                return 1;
-        }
-        return 0;
-    }
-
     int stripped_any = 0;
     int in_trust_ctx = 0;   /* set once a tier-1 word is found */
 
@@ -670,29 +700,29 @@ static int strip_truncated_suffix(char *s)
         int found = 0;
         int max_tier = in_trust_ctx ? 2 : 1;
 
-        for (int i = 0; vocab[i].word; i++) {
-            if (vocab[i].tier > max_tier) continue;
+        for (int i = 0; trunc_vocab[i].word; i++) {
+            if (trunc_vocab[i].tier > max_tier) continue;
 
-            int wlen = vocab[i].wlen;
-            int minp = vocab[i].min_prefix;
+            int wlen = trunc_vocab[i].wlen;
+            int minp = trunc_vocab[i].min_prefix;
 
             /* Try match lengths from full word down to min_prefix */
             for (int trylen = wlen; trylen >= minp; trylen--) {
                 /* Skip full-word length if trunc_only is set */
-                if (trylen == wlen && vocab[i].trunc_only) continue;
+                if (trylen == wlen && trunc_vocab[i].trunc_only) continue;
 
                 if ((size_t)trylen >= slen) continue; /* must leave preceding content */
                 const char *pos = s + slen - trylen;
                 if (!is_boundary(*(pos - 1))) continue;  /* word boundary on left */
 
-                if (icase_ncmp(pos, vocab[i].word, (size_t)trylen) != 0) continue;
+                if (icase_ncmp(pos, trunc_vocab[i].word, (size_t)trylen) != 0) continue;
 
                 /* Match — truncate here */
                 *(char *)pos = '\0';
                 rtrim(s);
                 found = 1;
                 stripped_any = 1;
-                if (vocab[i].tier == 1) in_trust_ctx = 1;
+                if (trunc_vocab[i].tier == 1) in_trust_ctx = 1;
                 break;
             }
             if (found) break;
@@ -736,11 +766,11 @@ static int strip_truncated_suffix(char *s)
         /* Search for leftmost tier-1 anchor (skip word 0 = the person name) */
         for (int wi = 1; wi < nwords; wi++) {
             int is_anchor = 0;
-            for (int vi = 0; vocab[vi].word; vi++) {
-                if (vocab[vi].tier != 1) continue;
-                if (words[wi].len == vocab[vi].wlen &&
-                    icase_ncmp(words[wi].start, vocab[vi].word,
-                               (size_t)vocab[vi].wlen) == 0) {
+            for (int vi = 0; trunc_vocab[vi].word; vi++) {
+                if (trunc_vocab[vi].tier != 1) continue;
+                if (words[wi].len == trunc_vocab[vi].wlen &&
+                    icase_ncmp(words[wi].start, trunc_vocab[vi].word,
+                               (size_t)trunc_vocab[vi].wlen) == 0) {
                     is_anchor = 1;
                     break;
                 }
@@ -751,7 +781,7 @@ static int strip_truncated_suffix(char *s)
              * or short prefixes of trust vocab words. */
             int all_ok = 1;
             for (int tj = wi + 1; tj < nwords; tj++) {
-                if (!is_vocab_prefix(words[tj].start,
+                if (!is_trunc_vocab_prefix(words[tj].start,
                                      (size_t)words[tj].len)) {
                     all_ok = 0;
                     break;
@@ -1037,7 +1067,8 @@ static void collapse_spaced_acronym(char *s)
                 char *nw = scan;
                 while (*scan && !isspace((unsigned char)*scan)) scan++;
                 size_t nwlen = (size_t)(scan - nw);
-                if (nwlen == 1 && isupper((unsigned char)*nw)) {
+                if (nwlen == 1 && isupper((unsigned char)*nw)
+                    && rlen < sizeof(run) - 1) {
                     run[rlen++] = *nw;
                     p = scan;
                 } else {
@@ -1047,9 +1078,11 @@ static void collapse_spaced_acronym(char *s)
             }
 
             if (rlen >= 2) {
-                if (oi > 0) out[oi++] = ' ';
-                memcpy(out + oi, run, rlen);
-                oi += rlen;
+                if (oi > 0 && oi < sizeof(out) - 1) out[oi++] = ' ';
+                if (oi + rlen < sizeof(out)) {
+                    memcpy(out + oi, run, rlen);
+                    oi += rlen;
+                }
             } else {
                 if (oi > 0) out[oi++] = ' ';
                 out[oi++] = *wstart;

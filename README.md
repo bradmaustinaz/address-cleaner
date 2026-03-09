@@ -106,9 +106,11 @@ See [DEPLOY.md](DEPLOY.md) for manual deployment, CUDA vs CPU builds, and DLL de
 Rules run in priority order on an uppercase working copy:
 
 1. **C/O prefix** — `C/O JOHN SMITH` → `JOHN SMITH`
-2. **Date clauses** — truncates at `DATED`, `DTD`, `U/D/T`, `UTD`
+2. **Date clauses** — truncates at `DATED`, `DTD`, `U/D/T`, `UTD`, `AMENDED`, `RESTATED`
 3. **Trust type suffixes** — strips longest match first:
-   - `REVOCABLE LIVING TRUST`, `IRREVOCABLE INTER VIVOS TRUST`, `FAMILY TRUST` (keeps FAMILY), `TRUST`, and ~30 other variants
+   - `REVOCABLE LIVING TRUST`, `IRREVOCABLE INTER VIVOS TRUST`, `FAMILY TRUST` (keeps FAMILY), `TRUST`, and ~40 other variants
+   - Includes `LEGACY TRUST`, `HERITAGE TRUST`, `SURVIVORS TRUST`, `EXEMPT TRUST`, `SUPPLEMENTAL NEEDS TRUST`, and estate acronyms (`GRAT`, `GRUT`, `CRUT`, `CRAT`, `QPRT`, `ILIT`)
+   - Uses `str_erase` to preserve content after trust patterns (e.g., co-owner names)
    - Handles truncated/garbled forms: `TRUS`, `TRU`, `SURVIVIORS`, etc.
 4. **Trustee language** — `AS TRUSTEE`, `SUCCESSOR TRUSTEE`, `AS CO-TRUSTEE`
 5. **Leading THE** — removed unless FAMILY is in the name
@@ -122,7 +124,7 @@ Rules run in priority order on an uppercase working copy:
 | Always uppercase | `LLC`, `LLP`, `LP`, `INC`, `CORP`, `LTD`, `PC`, `NA`, `FSB`, `PLLC`, `USA` |
 | Always lowercase (non-initial) | `of`, `and`, `or`, `the`, `for`, `in`, `on`, `at`, `to`, `by` |
 | Exact form | `Mr.`, `Mrs.`, `Dr.`, `Jr.`, `Sr.`, `II`, `III`, `IV` |
-| Smart prefixes | `McCoy`, `MacDonald`, `O'Brien`, hyphenated segments |
+| Smart prefixes | `McCoy`, `MacDonald` (6+ chars only), `O'Brien`, hyphenated segments |
 
 ---
 
@@ -160,7 +162,7 @@ Address Cleaner/
 ## Known limitations
 
 - **Reversed Last-First names** (`SIRAKIS DEREK M` → `Derek M Sirakis`) are detected and reordered automatically; AI then checks for typos in the corrected form.
-- **Short entity abbreviations** without a vowel (`HEB`, `KJ`) are sent to AI; without AI they title-case incorrectly (e.g., `Heb`).
+- **Short entity abbreviations** (≤3 chars without a vowel, e.g., `HEB`, `KJ`) are sent to AI; without AI they title-case incorrectly (e.g., `Heb`). 4+ char single-word results (e.g., `RUIZ`) get "Family" appended as a usable mailing label.
 - **Garbled truncated first names** (`LNDY`) are left as-is rather than guessed.
 
 ---
