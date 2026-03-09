@@ -20,6 +20,15 @@ typedef struct {
 } NameResult;
 
 /*
+ * name_set_list_all_upper: Tell the cleaner whether every name in the
+ * current batch is already entirely uppercase.  When set, name_clean
+ * skips title-case conversion and forces any AI output back to uppercase
+ * so the output matches the input convention.
+ * Call with 1 before cleaning an all-uppercase batch, 0 otherwise.
+ */
+void name_set_list_all_upper(int flag);
+
+/*
  * name_clean: Clean a raw name string.
  *   - Strips trust language, junk phrases
  *   - Applies title case with real-estate-aware exceptions

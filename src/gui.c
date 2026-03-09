@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include "gui.h"
 #include "tsv.h"
 #include "names.h"
@@ -107,6 +108,23 @@ static void do_clean(void)
     /* --- Open session log (always on) ---------------------------------- */
     slog_open();
 
+    /* --- Pre-scan: detect whether the entire input list is uppercase --- */
+    {
+        int all_upper = 1;
+        int has_alpha = 0;
+        for (const char *sc = input; *sc; sc++) {
+            if (isalpha((unsigned char)*sc)) {
+                has_alpha = 1;
+                if (!isupper((unsigned char)*sc)) {
+                    all_upper = 0;
+                    break;
+                }
+            }
+        }
+        /* Only set the flag when the input actually contains letters */
+        name_set_list_all_upper(all_upper && has_alpha);
+    }
+
     /* --- Process line by line ------------------------------------------ */
     int n_cleaned = 0;
     int n_flagged = 0;
@@ -166,6 +184,9 @@ next_line:
 
     out_buf[out_pos] = '\0';
     SetWindowText(g_hOutput, out_buf);
+
+    /* Reset list-level uppercase flag for next run */
+    name_set_list_all_upper(0);
 
     /* --- Close logs and report ----------------------------------------- */
     slog_close(n_cleaned, n_flagged, n_trust);
