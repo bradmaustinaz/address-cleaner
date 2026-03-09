@@ -247,6 +247,17 @@ int name_clean(const char *raw, NameResult *result)
         return -1;
     }
 
+    /* Detect whether the original input is already entirely uppercase.
+     * When it is, we preserve that casing and skip title-case conversion
+     * so the output matches the input convention. */
+    int input_all_upper = 1;
+    for (const char *cp = start; *cp; cp++) {
+        if (isalpha((unsigned char)*cp) && !isupper((unsigned char)*cp)) {
+            input_all_upper = 0;
+            break;
+        }
+    }
+
     {
         size_t slen = strlen(start);
         if (slen >= NAME_MAX_LEN) slen = NAME_MAX_LEN - 1;
@@ -363,7 +374,8 @@ int name_clean(const char *raw, NameResult *result)
             }
         }
 
-        apply_title_case(result->cleaned);
+        if (!input_all_upper)
+            apply_title_case(result->cleaned);
     } else {
         /* rules_apply stripped everything (e.g. "Not Available From The
          * Data Source" → erased by the junk table → "").  Use the
