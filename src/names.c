@@ -6,6 +6,16 @@
 #include "rules.h"
 #include "llm.h"
 
+/* List-level uppercase flag: set by the caller (gui.c) when every name
+ * in the current batch is already entirely uppercase.  Supplements the
+ * per-name input_all_upper check inside name_clean. */
+static int g_list_all_upper = 0;
+
+void name_set_list_all_upper(int flag)
+{
+    g_list_all_upper = !!flag;
+}
+
 /* =========================================================================
  * Exact-form table
  *
@@ -261,6 +271,21 @@ int name_clean(const char *raw, NameResult *result)
         return -1;
     }
 
+    /* Detect whether the original input is already entirely uppercase.
+     * When it is — or when the caller flagged the whole list as uppercase
+     * via name_set_list_all_upper — we preserve that casing and skip
+     * title-case conversion so the output matches the input convention. */
+    int input_all_upper = g_list_all_upper;
+    if (!input_all_upper) {
+        input_all_upper = 1;
+        for (const char *cp = start; *cp; cp++) {
+            if (isalpha((unsigned char)*cp) && !isupper((unsigned char)*cp)) {
+                input_all_upper = 0;
+                break;
+            }
+        }
+    }
+
     {
         size_t slen = strlen(start);
         if (slen >= NAME_MAX_LEN) slen = NAME_MAX_LEN - 1;
@@ -348,8 +373,10 @@ int name_clean(const char *raw, NameResult *result)
 
         /* Detect 2–4 char all-consonant words that title-case will render
          * incorrectly (e.g. "KJ" → "Kj", "JLS" → "Jls").  These are
-         * initials or abbreviations that the AI can fix. */
-        if (!(result->flags & NAME_FLAG_NEEDS_AI)) {
+         * initials or abbreviations that the AI can fix.
+         * Skip when input is all-uppercase — title case is not applied,
+         * so these words already render correctly in uppercase. */
+        if (!input_all_upper && !(result->flags & NAME_FLAG_NEEDS_AI)) {
             for (const char *q = result->cleaned; *q; ) {
                 while (*q && isspace((unsigned char)*q)) q++;
                 if (!*q) break;
@@ -377,7 +404,8 @@ int name_clean(const char *raw, NameResult *result)
             }
         }
 
-        apply_title_case(result->cleaned);
+        if (!input_all_upper)
+            apply_title_case(result->cleaned);
     } else {
         /* rules_apply stripped everything (e.g. "Not Available From The
          * Data Source" → erased by the junk table → "").  Use the
@@ -424,6 +452,13 @@ int name_clean(const char *raw, NameResult *result)
                 }
             }
             if (ai_ok) {
+                /* When the input is all-uppercase, force the AI output back
+                 * to uppercase so the output convention matches the input. */
+                if (input_all_upper) {
+                    for (char *ap = ai_out; *ap; ap++)
+                        *ap = (char)toupper((unsigned char)*ap);
+                }
+
                 strncpy(result->cleaned, ai_out, NAME_MAX_LEN - 1);
                 result->cleaned[NAME_MAX_LEN - 1] = '\0';
                 result->flags |= NAME_FLAG_WAS_AI;
