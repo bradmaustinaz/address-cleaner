@@ -179,13 +179,27 @@ static void apply_title_case(char *s)
             if (wlen > 2 && orig[0]=='M' && orig[1]=='C' && isalpha((unsigned char)orig[2]))
                 word_start[2] = (char)toupper((unsigned char)word_start[2]);
 
-            /* Mac prefix: MacDonald — only when 4th char was uppercase in orig.
+            /* Mac prefix: MacDonald.
              * Require wlen >= 6 to avoid false positives on common words
              * like MACON (5), MACE (4), MACHO (5), MACRO (5). Shortest
-             * real Mac-surname: MacKay (6). */
+             * real Mac-surname: MacKay (6).
+             * Also skip common English words that start with "MAC" but
+             * are not surnames (e.g. MACHINE, MACRAME). */
             if (wlen > 5 && orig[0]=='M' && orig[1]=='A' && orig[2]=='C'
-                         && isupper((unsigned char)orig[3]))
-                word_start[3] = (char)toupper((unsigned char)word_start[3]);
+                         && isupper((unsigned char)orig[3])) {
+                static const char *mac_non_names[] = {
+                    "machine", "machines", "machete", "machetes",
+                    "macrame", "macaroni", "macabre", "macadam",
+                    "machination", "machinations", "machinist",
+                    NULL
+                };
+                int is_blocked = 0;
+                for (int bi = 0; mac_non_names[bi]; bi++)
+                    if (str_ieq(lower, mac_non_names[bi]))
+                        { is_blocked = 1; break; }
+                if (!is_blocked)
+                    word_start[3] = (char)toupper((unsigned char)word_start[3]);
+            }
 
             /* O' prefix: O'Brien */
             if (wlen > 2 && orig[0]=='O' && orig[1]=='\''
@@ -304,7 +318,7 @@ int name_clean(const char *raw, NameResult *result)
                 we[nw] = q2;
                 nw++;
             }
-            if (nw >= 2 && nw <= 5) {
+            if (nw >= 3 && nw <= 5) {
                 size_t lwlen = (size_t)(we[nw-1] - ws[nw-1]);
                 if (lwlen == 1 && isalpha((unsigned char)ws[nw-1][0])) {
                     /* Rebuild: words[1..nw-1] + " " + words[0] */
@@ -388,9 +402,32 @@ int name_clean(const char *raw, NameResult *result)
             strncpy(result->ai_output, ai_out, NAME_MAX_LEN - 1);
             result->ai_output[NAME_MAX_LEN - 1] = '\0';
 
-            strncpy(result->cleaned, ai_out, NAME_MAX_LEN - 1);
-            result->cleaned[NAME_MAX_LEN - 1] = '\0';
-            result->flags |= NAME_FLAG_WAS_AI;
+            /* Reject AI output that reintroduces trust language the
+             * rules engine already stripped (LLM hallucination). */
+            int ai_ok = 1;
+            if (result->flags & NAME_FLAG_WAS_TRUST) {
+                /* Case-insensitive search for "trust" as a whole word */
+                for (const char *tp = ai_out; *tp; tp++) {
+                    if (tolower((unsigned char)tp[0]) == 't' &&
+                        tolower((unsigned char)tp[1]) == 'r' &&
+                        tolower((unsigned char)tp[2]) == 'u' &&
+                        tolower((unsigned char)tp[3]) == 's' &&
+                        tolower((unsigned char)tp[4]) == 't') {
+                        /* Check word boundaries */
+                        int lb = (tp == ai_out) ||
+                                 !isalnum((unsigned char)*(tp - 1));
+                        int rb = !tp[5] ||
+                                 !isalnum((unsigned char)tp[5]);
+                        if (lb && rb) { ai_ok = 0; break; }
+                    }
+                    if (!tp[1] || !tp[2] || !tp[3] || !tp[4]) break;
+                }
+            }
+            if (ai_ok) {
+                strncpy(result->cleaned, ai_out, NAME_MAX_LEN - 1);
+                result->cleaned[NAME_MAX_LEN - 1] = '\0';
+                result->flags |= NAME_FLAG_WAS_AI;
+            }
         }
     }
 

@@ -292,12 +292,59 @@ static int strip_and_trust(char *s, int *flags)
             rtrim(left);
 
             /* If the right-side person name is a superset of the left name,
-             * use it — it is the same person with more detail. */
+             * use it — it is the same person with more detail.
+             * However, if right has extra words beyond left, verify they
+             * are legitimate name parts (single-letter initials or short
+             * suffixes like JR/SR/II/III).  Extra multi-letter words that
+             * aren't recognizable name parts are likely trust-language
+             * residue or typos (e.g. "LIVUING" from "LIVING TRUST").
+             * In that case, prefer the cleaner left-side name. */
             if (*right_name && all_words_in(right_name, left)) {
-                size_t rlen = strlen(right_name);
-                memmove(s, right_name, rlen + 1);
-                *flags |= NAME_FLAG_WAS_TRUST;
-                return 1;
+                /* Check if right has extra words that look suspicious */
+                int use_right = 1;
+                if (!all_words_in(left, right_name)) {
+                    /* right is a strict superset — validate extra words */
+                    char rtmp[512];
+                    strncpy(rtmp, right_name, sizeof(rtmp) - 1);
+                    rtmp[sizeof(rtmp) - 1] = '\0';
+                    char *rp = rtmp;
+                    while (*rp) {
+                        while (isspace((unsigned char)*rp)) rp++;
+                        if (!*rp) break;
+                        char *ws = rp;
+                        while (*rp && !isspace((unsigned char)*rp)) rp++;
+                        char sv = *rp; *rp = '\0';
+                        size_t wl = strlen(ws);
+                        /* If this word is already in left, it's fine */
+                        if (!find_word(left, ws)) {
+                            /* Extra word: accept single-letter initials
+                             * and common suffixes; reject anything else */
+                            if (wl > 1) {
+                                char upper_w[64];
+                                for (size_t ui = 0; ui < wl && ui < 63; ui++)
+                                    upper_w[ui] = (char)toupper((unsigned char)ws[ui]);
+                                upper_w[wl < 63 ? wl : 63] = '\0';
+                                if (strcmp(upper_w, "JR") != 0 &&
+                                    strcmp(upper_w, "SR") != 0 &&
+                                    strcmp(upper_w, "II") != 0 &&
+                                    strcmp(upper_w, "III") != 0 &&
+                                    strcmp(upper_w, "IV") != 0) {
+                                    use_right = 0;
+                                    *rp = sv;
+                                    break;
+                                }
+                            }
+                        }
+                        *rp = sv;
+                        if (sv) rp++;
+                    }
+                }
+                if (use_right) {
+                    size_t rlen = strlen(right_name);
+                    memmove(s, right_name, rlen + 1);
+                    *flags |= NAME_FLAG_WAS_TRUST;
+                    return 1;
+                }
             }
         }
     }
@@ -1084,7 +1131,7 @@ static void collapse_spaced_acronym(char *s)
                 }
             }
 
-            if (rlen >= 2) {
+            if (rlen >= 3) {
                 if (oi > 0 && oi < sizeof(out) - 1) out[oi++] = ' ';
                 if (oi + rlen < sizeof(out)) {
                     memcpy(out + oi, run, rlen);

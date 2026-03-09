@@ -111,6 +111,7 @@ static void do_clean(void)
     int n_cleaned = 0;
     int n_flagged = 0;
     int n_trust   = 0;
+    char prev_raw[NAME_MAX_LEN] = {0};   /* previous raw input for dedup */
 
     char *line = input;
     while (line && *line) {
@@ -126,8 +127,15 @@ static void do_clean(void)
         TsvRow row;
         tsv_parse_row(line, &row);
 
+        /* Skip exact duplicate consecutive rows (same raw input) */
+        const char *raw_field = tsv_field(&row, 0);
+        if (prev_raw[0] && strcmp(raw_field, prev_raw) == 0)
+            goto next_line;
+        strncpy(prev_raw, raw_field, NAME_MAX_LEN - 1);
+        prev_raw[NAME_MAX_LEN - 1] = '\0';
+
         NameResult nr;
-        name_clean(tsv_field(&row, 0), &nr);
+        name_clean(raw_field, &nr);
         slog_row(&nr, nr.ai_input[0] ? nr.ai_input : NULL,
                       nr.ai_output[0] ? nr.ai_output : NULL);
 
