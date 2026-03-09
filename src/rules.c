@@ -296,15 +296,16 @@ static int strip_and_trust(char *s, int *flags)
  * Step 2c: Extract co-tenant from "TRUST_LEFT & PERSON_RIGHT"
  *
  * When the left side is a trust entity and the right side is a plain person
- * name (no trust language), decide which to keep:
+ * name (no trust language), keep the person (right side) — it is always
+ * the more useful mail label.
  *
  *   "Tssk Trust & Susan Shelton"                → "Susan Shelton"
  *   "Demarino Trust & Christine Demarino"       → "Christine Demarino"
  *   "The Cimarrons Living Trust & Terri Cutting"→ "Terri Cutting"
  *   "Melody And Michael Morgan Family Trust
- *      & Melody Morgan"                         → keep left (left is richer)
+ *      & Melody Morgan"                         → "Melody Morgan"
  *   "The Ardell And Kari Witt Family Trust
- *      & Ardell Witt Jr"                        → keep left (left has more names)
+ *      & Ardell Witt Jr"                        → "Ardell Witt Jr"
  * ====================================================================== */
 
 static int extract_cotenant(char *s, int *flags)
@@ -367,9 +368,15 @@ static int extract_cotenant(char *s, int *flags)
     }
     rtrim(left);
 
-    /* Decision 1: right's words ⊆ left_base → left is richer, let
-     * strip_trust_suffix handle it normally */
-    if (*left && all_words_in(left, right)) return 0;
+    /* Decision 1: right's words ⊆ left_base → person is specifically named
+     * on the deed, use the person name for the mail label.
+     * e.g. "Melody And Michael Morgan Family Trust & Melody Morgan"
+     *       → "Melody Morgan" (not "Melody and Michael Morgan Family") */
+    if (*left && all_words_in(left, right)) {
+        memmove(s, right, strlen(right) + 1);
+        *flags |= NAME_FLAG_WAS_TRUST;
+        return 1;
+    }
 
     /* Decision 2: left_base's words ⊆ right → right is the person name */
     if (*left && all_words_in(right, left)) {
@@ -378,20 +385,7 @@ static int extract_cotenant(char *s, int *flags)
         return 1;
     }
 
-    /* Decision 3: left_base has more words → left is more informative
-     * (e.g. "Ardell and Kari Witt" vs just "Ardell Witt Jr") */
-    int lwords = 0;
-    { char *lp = left;
-      while (*lp) {
-          while (isspace((unsigned char)*lp)) lp++;
-          if (!*lp) break;
-          lwords++;
-          while (*lp && !isspace((unsigned char)*lp)) lp++;
-      }
-    }
-    if (lwords > rwords) return 0;
-
-    /* Default: use right (person name is more useful than trust acronym) */
+    /* Default: use right (person name is more useful than trust entity) */
     memmove(s, right, strlen(right) + 1);
     *flags |= NAME_FLAG_WAS_TRUST;
     return 1;
@@ -470,212 +464,337 @@ static int strip_trust_suffix(char *s)
 }
 
 /* =========================================================================
+ * Step 3a: Strip trailing "FAMILY" when preceded by first names
+ *
+ * After strip_trust_suffix keeps "FAMILY" from "FAMILY TRUST", check whether
+ * the preceding text is just a surname (keep FAMILY) or a full person name
+ * (strip FAMILY — it is noise, not a useful label).
+ *
+ *   "DONAHUE FAMILY"                            → keep (1 surname)
+ *   "LIZ JOU FAMILY"                            → strip → "LIZ JOU"
+ *   "MAURICE G & H PATRICIA HARTMAN FAMILY"     → strip → "MAURICE G ..."
+ * ====================================================================== */
+
+static int strip_stale_family(char *s)
+{
+    size_t slen = strlen(s);
+    const size_t flen = 6; /* strlen("FAMILY") */
+    if (slen <= flen) return 0;
+
+    const char *fam = s + slen - flen;
+    if (!is_boundary(*(fam - 1))) return 0;
+    if (icase_ncmp(fam, "FAMILY", flen) != 0) return 0;
+
+    /* Count "real" words before FAMILY (skip single-letter initials and &) */
+    int real_words = 0;
+    const char *p = s;
+    while (p < fam) {
+        while (p < fam && (isspace((unsigned char)*p) || *p == '&')) p++;
+        if (p >= fam) break;
+        const char *ws = p;
+        while (p < fam && !isspace((unsigned char)*p) && *p != '&') p++;
+        size_t wlen = (size_t)(p - ws);
+        if (wlen > 1) real_words++;  /* skip single-letter initials */
+    }
+
+    if (real_words <= 1) return 0;  /* "DONAHUE FAMILY" — keep */
+
+    /* Strip " FAMILY" (also remove the space before it) */
+    char *cut = (char *)(fam - 1);
+    *cut = '\0';
+    rtrim(s);
+    return 1;
+}
+
+/* =========================================================================
  * Step 3b: Strip truncated trust-type suffixes (field-cutoff in source data)
  *
  * County records are sometimes truncated mid-word at a column boundary:
  *   "Gregory Neil Hunter Living Tru"   (TRUST → TRU)
  *   "Alfredo Ontiveros Revocable Tr"   (TRUST → TR)
  *
- * Patterns are matched ONLY at the END of the string (suffix-anchored)
- * so they cannot fire in the middle of a legitimate name.
+ * Uses a vocabulary-based approach with iterative right-to-left stripping
+ * plus a forward anchor scan, instead of exhaustive compound patterns.
+ * This automatically handles ANY combination of trust vocabulary at ANY
+ * truncation point.  Adding a new trust type = one vocabulary entry.
+ *
+ * Two-tier system prevents false positives:
+ *   Tier 1 ("anchor"): always stripped (IRREVOCABLE, REVOCABLE, etc.)
+ *   Tier 2 ("context"): only stripped after a tier-1 word is found
+ *
+ * Phase 1: Iterative right-to-left stripping of vocab words/prefixes
+ * Phase 2: Forward anchor scan for short trailing fragments
+ * Phase 3: Fuzzy SURVIVOR matching (any word starting with SURVI)
+ * Phase 4: Standalone LIVING at end of 3+ word name
  * ====================================================================== */
 
 static int strip_truncated_suffix(char *s)
 {
-    static const char *patterns[] = {
-        /*
-         * Compound-phrase truncations — longest / most-specific first so that
-         * a long-prefix match fires before a shorter suffix-only pattern does.
-         */
+    /*
+     * Two-tier trust-vocabulary table.
+     *
+     * Instead of listing every possible truncation of every compound trust
+     * phrase (~170 patterns), we define individual vocabulary words and strip
+     * them iteratively from the end of the string, right-to-left.
+     *
+     * Tier 1 ("anchor") words are NEVER legitimate as the last word of a
+     * person or business name — they are always stripped when found at the
+     * end of the string.
+     *
+     * Tier 2 ("context") words COULD be surnames (e.g., Shelter, Land) so
+     * they are only stripped after a Tier 1 word has already been removed
+     * in the current pass (i.e., we are in a "trust context").
+     *
+     * Each entry stores the full word and a minimum prefix length for
+     * truncated matching.  If trunc_only is set, the full word is NOT
+     * matched here (it is handled by another rule in the pipeline).
+     *
+     * The iterative approach handles ANY combination of trust vocabulary
+     * at ANY truncation point automatically — e.g.
+     *   "SMITH IRREVOCABLE INTER VIVOS TRUS"
+     *   → strip TRUS (prefix of TRUST) → SMITH IRREVOCABLE INTER VIVOS
+     *   → strip VIVOS                  → SMITH IRREVOCABLE INTER
+     *   → strip INTER                  → SMITH IRREVOCABLE
+     *   → strip IRREVOCABLE            → SMITH
+     */
 
-        /* IRREVOCABLE INTER VIVOS TRUST — all truncation points */
-        "IRREVOCABLE INTER VIVOS TRUS", "IRREVOCABLE INTER VIVOS TRU",
-        "IRREVOCABLE INTER VIVOS TR",   "IRREVOCABLE INTER VIVOS T",
-        "IRREVOCABLE INTER VIVOS",
-        "IRREVOCABLE INTER VIVO",       "IRREVOCABLE INTER VIV",
-        "IRREVOCABLE INTER VI",         "IRREVOCABLE INTER V",
-        "IRREVOCABLE INTER",
+    typedef struct {
+        const char *word;
+        int         wlen;       /* strlen(word), cached              */
+        int         min_prefix; /* minimum chars for truncated match */
+        int         trunc_only; /* 1 = skip full-word match          */
+        int         tier;       /* 1 = anchor, 2 = context           */
+    } TrustVocab;
 
-        /* REVOCABLE INTER VIVOS TRUST — all truncation points */
-        "REVOCABLE INTER VIVOS TRUS", "REVOCABLE INTER VIVOS TRU",
-        "REVOCABLE INTER VIVOS TR",   "REVOCABLE INTER VIVOS T",
-        "REVOCABLE INTER VIVOS",
-        "REVOCABLE INTER VIVO",       "REVOCABLE INTER VIV",
-        "REVOCABLE INTER VI",         "REVOCABLE INTER V",
-        "REVOCABLE INTER",
+    static const TrustVocab vocab[] = {
+        /* ── Tier 1: anchor words (always safe to strip) ──────────────
+         *
+         * These words NEVER appear as legitimate person/business name
+         * endings in real-estate ownership records.  They are always
+         * stripped when found as the last word (or truncated prefix
+         * thereof) in the string. */
 
-        /* INTER VIVOS TRUST — all truncation points */
-        "INTER VIVOS TRUS", "INTER VIVOS TRU", "INTER VIVOS TR",
-        "INTER VIVOS T",    "INTER VIVOS",
-        "INTER VIVO",       "INTER VIV",
-        "INTER VI",         "INTER V",
+        /* Core trust modifiers */
+        {"IRREVOCABLE",    11, 5, 0, 1},
+        {"REVOCABLE",       9, 5, 0, 1},
+        {"CHARITABLE",     10, 6, 0, 1},
+        {"TESTAMENTARY",   12, 6, 0, 1},
+        {"SPENDTHRIFT",    11, 6, 0, 1},
+        {"DISCRETIONARY",  13, 8, 0, 1},
+        {"UNITRUST",        8, 5, 0, 1},
+        {"QTIP",            4, 4, 0, 1},
+        {"VIVOS",           5, 3, 0, 1},
+        {"GRANTOR",         7, 6, 0, 1},
+        {"QUALIFIED",       9, 5, 0, 1},
+        {"DYNASTY",         7, 6, 0, 1},
+        {"MARITAL",         7, 7, 0, 1},
+        {"BYPASS",          6, 5, 0, 1},
 
-        /* IRREVOCABLE LIVING TRUST — all truncation points */
-        "IRREVOCABLE LIVING TRUS", "IRREVOCABLE LIVING TRU",
-        "IRREVOCABLE LIVING TR",   "IRREVOCABLE LIVING T",
-        "IRREVOCABLE LIVING",
-        "IRREVOCABLE LIVIN",       "IRREVOCABLE LIVI",
-        "IRREVOCABLE LIV",         "IRREVOCABLE LI",
-        "IRREVOCABLE L",
+        /* Compound-phrase components — never surnames */
+        {"INTER",           5, 5, 0, 1},
+        {"REMAINDER",       9, 6, 0, 1},
+        {"GENERATION",     10, 6, 0, 1},
+        {"SKIPPING",        8, 5, 0, 1},
+        {"PERSONAL",        8, 5, 0, 1},
+        {"RESIDENCE",       9, 6, 0, 1},
+        {"ASSET",           5, 5, 0, 1},
+        {"PROTECTION",     10, 6, 0, 1},
+        {"SPECIAL",         7, 7, 0, 1},
+        {"NEEDS",           5, 5, 0, 1},
+        {"CREDIT",          6, 6, 0, 1},
+        {"SHELTER",         7, 5, 0, 1},
 
-        /* REVOCABLE LIVING TRUST — all truncation points */
-        "REVOCABLE LIVING TRUS", "REVOCABLE LIVING TRU",
-        "REVOCABLE LIVING TR",   "REVOCABLE LIVING T",
-        "REVOCABLE LIVING",
-        "REVOCABLE LIVIN",       "REVOCABLE LIVI",
-        "REVOCABLE LIV",         "REVOCABLE LI",
-        "REVOCABLE L",
+        /* TRUST / TRUSTEE — full words handled by strip_trust_suffix
+         * and strip_trustee, so only match truncated forms here. */
+        {"TRUST",           5, 3, 1, 1},  /* TRU, TRUS           */
+        {"TRUSTEE",         7, 6, 1, 1},  /* TRUSTE              */
 
-        /* IRREVOCABLE TRUST — truncated within TRUST */
-        "IRREVOCABLE TRUS", "IRREVOCABLE TRU", "IRREVOCABLE TR", "IRREVOCABLE T",
+        /* LIVING — truncated forms LIVI/LIVIN are tier 1 (never names).
+         * LIV (3 chars) could be a Scandinavian name so min_prefix=4.
+         * Full "LIVING" has its own special-case handler below. */
+        {"LIVING",          6, 4, 1, 1},
 
-        /* REVOCABLE TRUST — truncated within TRUST */
-        "REVOCABLE TRUS", "REVOCABLE TRU", "REVOCABLE TR", "REVOCABLE T",
+        /* ── Tier 2: context words (only strip after a tier-1 match) ──
+         *
+         * These words COULD appear in legitimate business names (e.g.,
+         * "COMMUNITY BANK LLC") so they are only stripped once trust
+         * context is established by a tier-1 match. */
 
-        /* LIVING TRUST — truncated within TRUST */
-        "LIVING TRUS", "LIVING TRU", "LIVING TR", "LIVING T",
+        /* FAMILY / LAND — full words handled elsewhere (strip_trust_suffix,
+         * strip_stale_family), so only truncated forms match here. */
+        {"FAMILY",          6, 3, 1, 2},
+        {"LAND",            4, 4, 1, 2},
 
-        /* FAMILY TRUST — truncated (FAMILY alone is preserved by strip_trust_suffix) */
-        "FAMILY TRUS", "FAMILY TRU", "FAMILY TR", "FAMILY T",
+        /* Less common trust types that overlap with business vocabulary */
+        {"RETAINED",        8, 6, 0, 2},
+        {"ANNUITY",         7, 6, 0, 2},
+        {"SUPPLEMENTAL",   12, 6, 0, 2},
+        {"INSURANCE",       9, 6, 0, 2},
+        {"NOMINEE",         7, 5, 0, 2},
+        {"COMMUNITY",       9, 6, 0, 2},
+        {"PROPERTY",        8, 6, 0, 2},
+        {"HOMESTEAD",       9, 6, 0, 2},
+        {"BLIND",           5, 5, 0, 2},
+        {"EDUCATION",       9, 6, 0, 2},
+        {"MEDICAID",        8, 6, 0, 2},
 
-        /* LAND TRUST — truncated */
-        "LAND TRUS", "LAND TRU", "LAND TR", "LAND T",
-
-        /* CHARITABLE REMAINDER UNITRUST — all truncation points */
-        "CHARITABLE REMAINDER UNITRUS", "CHARITABLE REMAINDER UNITRU",
-        "CHARITABLE REMAINDER UNITR",   "CHARITABLE REMAINDER UNITU",
-        "CHARITABLE REMAINDER UNIT",    "CHARITABLE REMAINDER UNI",
-        "CHARITABLE REMAINDER UN",      "CHARITABLE REMAINDER U",
-        /* CHARITABLE REMAINDER TRUST — all truncation points */
-        "CHARITABLE REMAINDER TRUS", "CHARITABLE REMAINDER TRU",
-        "CHARITABLE REMAINDER TR",   "CHARITABLE REMAINDER T",
-        "CHARITABLE REMAINDER",      "CHARITABLE REMAINDE",
-        "CHARITABLE REMAIND",        "CHARITABLE REMAIN",
-        "CHARITABLE REMAI",          "CHARITABLE REMA",
-        "CHARITABLE REM",            "CHARITABLE RE",
-        "CHARITABLE R",              "CHARITABLE",
-
-        /* GENERATION SKIPPING TRUST — all truncation points */
-        "GENERATION SKIPPING TRUS", "GENERATION SKIPPING TRU",
-        "GENERATION SKIPPING TR",   "GENERATION SKIPPING T",
-        "GENERATION SKIPPING",      "GENERATION SKIPPIN",
-        "GENERATION SKIPPI",        "GENERATION SKIPP",
-        "GENERATION SKIP",
-
-        /* QUALIFIED PERSONAL RESIDENCE TRUST — all truncation points */
-        "QUALIFIED PERSONAL RESIDENCE TRUS", "QUALIFIED PERSONAL RESIDENCE TRU",
-        "QUALIFIED PERSONAL RESIDENCE TR",   "QUALIFIED PERSONAL RESIDENCE T",
-        "QUALIFIED PERSONAL RESIDENCE",      "QUALIFIED PERSONAL RESIDENC",
-        "QUALIFIED PERSONAL RESIDEN",        "QUALIFIED PERSONAL RESIDE",
-        "QUALIFIED PERSONAL RESID",          "QUALIFIED PERSONAL RESI",
-        "QUALIFIED PERSONAL RES",            "QUALIFIED PERSONAL RE",
-        "QUALIFIED PERSONAL R",              "QUALIFIED PERSONAL",
-        "QUALIFIED PERSONA",                 "QUALIFIED PERSON",
-
-        /* ASSET PROTECTION TRUST — all truncation points */
-        "ASSET PROTECTION TRUS", "ASSET PROTECTION TRU",
-        "ASSET PROTECTION TR",   "ASSET PROTECTION T",
-        "ASSET PROTECTION",      "ASSET PROTECTIO",
-        "ASSET PROTECTI",        "ASSET PROTECT",
-        "ASSET PROTEC",          "ASSET PROTE",
-        "ASSET PROT",
-
-        /* SPECIAL NEEDS TRUST — truncated */
-        "SPECIAL NEEDS TRUS", "SPECIAL NEEDS TRU",
-        "SPECIAL NEEDS TR",   "SPECIAL NEEDS T",
-        "SPECIAL NEEDS",      "SPECIAL NEED",
-
-        /* SPENDTHRIFT TRUST — all truncation points */
-        "SPENDTHRIFT TRUS", "SPENDTHRIFT TRU", "SPENDTHRIFT TR", "SPENDTHRIFT T",
-        "SPENDTHRIFT",      "SPENDTHRIF",      "SPENDTHRI",
-        "SPENDTHR",         "SPENDTH",         "SPENDT",
-
-        /* TESTAMENTARY TRUST — all truncation points */
-        "TESTAMENTARY TRUS", "TESTAMENTARY TRU", "TESTAMENTARY TR", "TESTAMENTARY T",
-        "TESTAMENTARY",      "TESTAMENTAR",      "TESTAMENTA",
-        "TESTAMENT",         "TESTAMEN",         "TESTAME",
-
-        /* DISCRETIONARY TRUST — all truncation points */
-        "DISCRETIONARY TRUS", "DISCRETIONARY TRU", "DISCRETIONARY TR", "DISCRETIONARY T",
-        "DISCRETIONARY",      "DISCRETIONAR",      "DISCRETIONA",
-        "DISCRETION",         "DISCRETIO",         "DISCRETI",
-
-        /* CREDIT SHELTER TRUST — all truncation points */
-        "CREDIT SHELTER TRUS", "CREDIT SHELTER TRU", "CREDIT SHELTER TR", "CREDIT SHELTER T",
-        "CREDIT SHELTER",      "CREDIT SHELTE",      "CREDIT SHELT",
-        "CREDIT SHEL",         "CREDIT SHE",         "CREDIT SH",
-
-        /* DYNASTY TRUST — all truncation points */
-        "DYNASTY TRUS", "DYNASTY TRU", "DYNASTY TR", "DYNASTY T",
-        "DYNASTY",      "DYNAST",
-
-        /* MARITAL TRUST — truncated */
-        "MARITAL TRUS", "MARITAL TRU", "MARITAL TR", "MARITAL T",
-
-        /* BYPASS TRUST — truncated */
-        "BYPASS TRUS", "BYPASS TRU", "BYPASS TR", "BYPASS T", "BYPAS",
-
-        /* QTIP TRUST — truncated */
-        "QTIP TRUS", "QTIP TRU", "QTIP TR", "QTIP T",
-
-        /*
-         * Single-word truncations and full-word non-name trust terms.
-         * None of these are components of a legitimate person or business name.
-         */
-
-        /* IRREVOCABLE — full word at column boundary, then each truncation */
-        "IRREVOCABLE",
-        "IRREVOCABL", "IRREVOCAB", "IRREVOCA", "IRREVOC", "IRREVO", "IRREV",
-
-        /* REVOCABLE — full word at column boundary, then each truncation */
-        "REVOCABLE",
-        "REVOCABL",  "REVOCAB",  "REVOCA",  "REVOC",
-
-        /* TRUSTEE truncated (full TRUST caught by trust_suffixes catch-all) */
-        "TRUSTE",
-
-        /* TRUST truncated */
-        "TRUS", "TRU",
-
-        /* LIVING truncated below 6 chars (LIVING alone → special case below) */
-        "LIVIN", "LIVI",
-
-        /*
-         * Mangled / misspelled SURVIVOR(S) — data-entry corruption of
-         * "Survivor's Trust" / "Survivors Trust" at the end of the name.
-         * Ordered longest-to-shortest within each corruption family.
-         */
-        "SURVIVIORS", "SURVIVIOR",   /* extra I inserted (surviv-I-or)   */
-        "SURVIIVORS", "SURVIIVOS",   /* doubled II                        */
-        "SURVIIVO",                  /* doubled II, short form            */
-        "SURVIVIOS",  "SURVIVIO",    /* IO ending corruption              */
-        "SURVIVRS",                  /* dropped O                         */
-        "SURVIVOS",   "SURVIVO",     /* transposition / cutoff            */
-        "SURVIVORS",                 /* full word — "SURVIVORS TRUST" cut */
-        "SURVIV",                    /* truncated at 6 chars              */
-        "SURVI",                     /* truncated at 5 chars              */
-        NULL
+        {NULL, 0, 0, 0, 0}
     };
 
-    size_t slen = strlen(s);
-    for (int i = 0; patterns[i]; i++) {
-        size_t plen = strlen(patterns[i]);
-        if (plen >= slen) continue;          /* must have a preceding name word */
-        const char *pos = s + slen - plen;
-        if (!is_boundary(*(pos - 1))) continue;  /* word boundary on the left */
-        if (icase_ncmp(pos, patterns[i], plen) != 0) continue;
-        *(char *)pos = '\0';
-        rtrim(s);
-        return 1;
+    /*
+     * is_vocab_prefix: returns 1 if the word (of length n) is a prefix
+     * of ANY trust vocabulary word.  Used by Phase 2 to verify that
+     * short trailing fragments are plausibly truncated trust words.
+     */
+    int is_vocab_prefix(const char *w, size_t n) {
+        for (int i = 0; vocab[i].word; i++) {
+            if ((int)n <= vocab[i].wlen &&
+                icase_ncmp(w, vocab[i].word, n) == 0)
+                return 1;
+        }
+        return 0;
     }
 
-    /* Special case: "LIVING" alone at end of a 3+ word name.
-     * This happens when the source data truncated "LIVING TRUST" at the
-     * column boundary leaving only the first word:
-     *   "Marie Valente & The Marie Anne Elisabeth Valente Living"
-     * We only strip it if there are 3+ words to avoid touching the rare
-     * "John Living" two-word personal name. */
+    int stripped_any = 0;
+    int in_trust_ctx = 0;   /* set once a tier-1 word is found */
+
+    /* ── Phase 1: Right-to-left iterative stripping ──────────────
+     *
+     * Repeatedly strip trust vocabulary words (full or truncated to
+     * ≥ min_prefix chars) from the end of the string.  Tier-2 words
+     * are only stripped after a tier-1 anchor has been removed. */
+    for (;;) {
+        size_t slen = strlen(s);
+        if (slen == 0) break;
+
+        int found = 0;
+        int max_tier = in_trust_ctx ? 2 : 1;
+
+        for (int i = 0; vocab[i].word; i++) {
+            if (vocab[i].tier > max_tier) continue;
+
+            int wlen = vocab[i].wlen;
+            int minp = vocab[i].min_prefix;
+
+            /* Try match lengths from full word down to min_prefix */
+            for (int trylen = wlen; trylen >= minp; trylen--) {
+                /* Skip full-word length if trunc_only is set */
+                if (trylen == wlen && vocab[i].trunc_only) continue;
+
+                if ((size_t)trylen >= slen) continue; /* must leave preceding content */
+                const char *pos = s + slen - trylen;
+                if (!is_boundary(*(pos - 1))) continue;  /* word boundary on left */
+
+                if (icase_ncmp(pos, vocab[i].word, (size_t)trylen) != 0) continue;
+
+                /* Match — truncate here */
+                *(char *)pos = '\0';
+                rtrim(s);
+                found = 1;
+                stripped_any = 1;
+                if (vocab[i].tier == 1) in_trust_ctx = 1;
+                break;
+            }
+            if (found) break;
+        }
+        if (!found) break;
+    }
+
+    /* ── Phase 2: Forward anchor scan ────────────────────────────
+     *
+     * Phase 1 can fail when the rightmost word is too short for any
+     * vocabulary entry's min_prefix (e.g., "REVOCABLE T" — the "T"
+     * is only 1 char but is clearly truncated TRUST).
+     *
+     * Phase 2 scans for the leftmost tier-1 anchor word (full match,
+     * not the first word) and verifies that ALL trailing words are
+     * either full trust-vocabulary matches or short prefixes of one.
+     * If verified, everything from the anchor onward is stripped.
+     *
+     *   "SMITH IRREVOCABLE LIV"
+     *   → anchor IRREVOCABLE at word 1, trailing "LIV" is prefix of LIVING
+     *   → strip "IRREVOCABLE LIV" → "SMITH"
+     *
+     *   "SMITH CHARITABLE RE"
+     *   → anchor CHARITABLE at word 1, trailing "RE" is prefix of REMAINDER
+     *   → strip "CHARITABLE RE" → "SMITH"
+     */
     {
+        /* Tokenize: collect start/length of each word (max 32 words) */
+        struct { const char *start; int len; } words[32];
+        int nwords = 0;
+        const char *p = s;
+        while (*p && nwords < 32) {
+            while (*p && isspace((unsigned char)*p)) p++;
+            if (!*p) break;
+            words[nwords].start = p;
+            while (*p && !isspace((unsigned char)*p)) p++;
+            words[nwords].len = (int)(p - words[nwords].start);
+            nwords++;
+        }
+
+        /* Search for leftmost tier-1 anchor (skip word 0 = the person name) */
+        for (int wi = 1; wi < nwords; wi++) {
+            int is_anchor = 0;
+            for (int vi = 0; vocab[vi].word; vi++) {
+                if (vocab[vi].tier != 1) continue;
+                if (words[wi].len == vocab[vi].wlen &&
+                    icase_ncmp(words[wi].start, vocab[vi].word,
+                               (size_t)vocab[vi].wlen) == 0) {
+                    is_anchor = 1;
+                    break;
+                }
+            }
+            if (!is_anchor) continue;
+
+            /* Verify trailing words (wi+1 .. nwords-1) are trust vocab
+             * or short prefixes of trust vocab words. */
+            int all_ok = 1;
+            for (int tj = wi + 1; tj < nwords; tj++) {
+                if (!is_vocab_prefix(words[tj].start,
+                                     (size_t)words[tj].len)) {
+                    all_ok = 0;
+                    break;
+                }
+            }
+            if (!all_ok) continue;
+
+            /* Strip everything from anchor word onward */
+            *(char *)words[wi].start = '\0';
+            rtrim(s);
+            stripped_any = 1;
+            break;
+        }
+    }
+
+    /* ── Phase 3: Fuzzy SURVIVOR matching ────────────────────────
+     *
+     * Any word starting with "SURVI" (5+ chars) at the end of the
+     * string is mangled/truncated survivor language.  This catches
+     * all data-entry corruption variants (SURVIVIOR, SURVIIVO,
+     * SURVIVIOS, etc.) plus any future ones automatically. */
+    if (!stripped_any) {
+        size_t slen = strlen(s);
+        if (slen > 5) {
+            const char *end = s + slen;
+            const char *wp = end;
+            while (wp > s && !isspace((unsigned char)*(wp - 1))) wp--;
+            size_t wlen = (size_t)(end - wp);
+            if (wlen >= 5 && wp > s && is_boundary(*(wp - 1)) &&
+                icase_ncmp(wp, "SURVI", 5) == 0) {
+                *(char *)wp = '\0';
+                rtrim(s);
+                stripped_any = 1;
+            }
+        }
+    }
+
+    /* ── Phase 4: "LIVING" alone at end of a 3+ word name ────────
+     *
+     * Source data truncated "LIVING TRUST" at the column boundary,
+     * leaving only "LIVING".  We only strip if 3+ words to avoid
+     * touching the rare "John Living" personal name. */
+    if (!stripped_any) {
         size_t slen2 = strlen(s);
         const size_t llen = 6; /* strlen("LIVING") */
         if (slen2 > llen) {
@@ -683,22 +802,22 @@ static int strip_truncated_suffix(char *s)
             if (is_boundary(*(pos2 - 1)) &&
                 icase_ncmp(pos2, "LIVING", llen) == 0) {
                 int wc = 0;
-                for (const char *p = s; *p; ) {
-                    while (*p && isspace((unsigned char)*p)) p++;
-                    if (!*p) break;
+                for (const char *p2 = s; *p2; ) {
+                    while (*p2 && isspace((unsigned char)*p2)) p2++;
+                    if (!*p2) break;
                     wc++;
-                    while (*p && !isspace((unsigned char)*p)) p++;
+                    while (*p2 && !isspace((unsigned char)*p2)) p2++;
                 }
                 if (wc >= 3) {
                     *(char *)pos2 = '\0';
                     rtrim(s);
-                    return 1;
+                    stripped_any = 1;
                 }
             }
         }
     }
 
-    return 0;
+    return stripped_any;
 }
 
 /* =========================================================================
@@ -1136,6 +1255,7 @@ int rules_apply(char *s, size_t slen)
 
     if (strip_date_clause(s))      { flags |= NAME_FLAG_WAS_TRUST; dlog("strip_date_clause", s); }
     if (strip_trust_suffix(s))     { flags |= NAME_FLAG_WAS_TRUST; dlog("strip_trust_suffix", s); }
+    if (strip_stale_family(s))     dlog("strip_stale_family", s);
     if (strip_truncated_suffix(s)) { flags |= NAME_FLAG_WAS_TRUST; dlog("strip_truncated_suffix", s); }
     if (strip_trustee(s))          { flags |= NAME_FLAG_WAS_TRUST; dlog("strip_trustee", s); }
 

@@ -268,13 +268,12 @@ int name_clean(const char *raw, NameResult *result)
                 result->flags |= NAME_FLAG_NEEDS_AI;
             } else {
                 /* Longer single words (e.g. "MAXWELL") are surnames —
-                 * revert to the full original trust name so the mailing
-                 * label shows a recognisable entity name. */
-                strncpy(result->cleaned, start, NAME_MAX_LEN - 1);
-                result->cleaned[NAME_MAX_LEN - 1] = '\0';
-                for (char *p = result->cleaned; *p; p++)
-                    *p = (char)toupper((unsigned char)*p);
-                result->flags &= ~(NAME_FLAG_WAS_TRUST | NAME_FLAG_NEEDS_AI);
+                 * append "FAMILY" to create a usable mail label instead
+                 * of reverting to the full trust name. */
+                size_t clen = strlen(result->cleaned);
+                if (clen + 7 < NAME_MAX_LEN) { /* 7 = strlen(" FAMILY") */
+                    memcpy(result->cleaned + clen, " FAMILY", 8);
+                }
             }
         }
 
@@ -344,7 +343,7 @@ int name_clean(const char *raw, NameResult *result)
                         up[k] = (char)toupper(c);
                         lo[k] = (char)tolower(c);
                         if (up[k]=='A'||up[k]=='E'||up[k]=='I'||
-                            up[k]=='O'||up[k]=='U'||up[k]=='Y') has_vowel = 1;
+                            up[k]=='O'||up[k]=='U') has_vowel = 1;
                     }
                     if (all_alpha && !has_vowel
                         && !in_table(up, upper_words)
