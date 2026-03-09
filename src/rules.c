@@ -1138,8 +1138,12 @@ static void collapse_spaced_acronym(char *s)
                     oi += rlen;
                 }
             } else {
-                if (oi > 0 && oi < sizeof(out) - 1) out[oi++] = ' ';
-                if (oi < sizeof(out) - 1) out[oi++] = *wstart;
+                /* Short run (1–2 letters): emit each letter separately
+                 * so that "D C" stays as "D C", not just "D". */
+                for (size_t ri = 0; ri < rlen; ri++) {
+                    if (oi > 0 && oi < sizeof(out) - 1) out[oi++] = ' ';
+                    if (oi < sizeof(out) - 1) out[oi++] = run[ri];
+                }
             }
         } else {
             if (oi > 0 && oi < sizeof(out) - 1) out[oi++] = ' ';
@@ -1398,7 +1402,7 @@ int rules_apply(char *s, size_t slen)
             while (*sp && !isspace((unsigned char)*sp)) sp++;
             if (*sp) *sp++ = '\0';
         }
-        if (wc >= 2 && wc <= 4) {
+        if (wc >= 3 && wc <= 4) {
             const char *last = wptr[wc - 1];
             if (strlen(last) == 1 && isalpha((unsigned char)last[0]))
                 flags |= NAME_FLAG_NEEDS_AI;
