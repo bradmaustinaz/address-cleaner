@@ -207,6 +207,31 @@ static int strip_date_clause(char *s)
     return 0;
 }
 
+/* Quick-strip trust keywords for name extraction (used by strip_and_trust
+ * and extract_cotenant).  Longest-match first, "TRUST" catch-all last.
+ * This must stay in sync with trust_suffixes[] below. */
+static const char *trust_keywords_quick[] = {
+    "AMENDED AND RESTATED TRUST",
+    "RESTATEMENT OF TRUST",
+    "REVOCABLE LIVING TRUST", "IRREVOCABLE LIVING TRUST",
+    "LEGACY LIVING TRUST", "HERITAGE LIVING TRUST",
+    "REVOCABLE INTER VIVOS TRUST", "IRREVOCABLE INTER VIVOS TRUST",
+    "INTER VIVOS TRUST", "LIVING TRUST",
+    "CHARITABLE REMAINDER UNITRUST", "CHARITABLE REMAINDER TRUST",
+    "CHARITABLE LEAD TRUST",
+    "GENERATION SKIPPING TRUST", "GENERATION-SKIPPING TRUST",
+    "ASSET PROTECTION TRUST", "SUPPLEMENTAL NEEDS TRUST",
+    "SPECIAL NEEDS TRUST",
+    "DISCRETIONARY TRUST", "SPENDTHRIFT TRUST", "TESTAMENTARY TRUST",
+    "IRREVOCABLE TRUST", "REVOCABLE TRUST",
+    "SURVIVORS TRUST", "SURVIVOR'S TRUST",
+    "EXEMPT TRUST", "LEGACY TRUST", "HERITAGE TRUST",
+    "FAMILY TRUST", "LAND TRUST", "BLIND TRUST",
+    "MARITAL TRUST", "BYPASS TRUST",
+    "CREDIT SHELTER TRUST", "QTIP TRUST", "DYNASTY TRUST",
+    "TRUST", NULL
+};
+
 /* =========================================================================
  * Step 2b: Strip "[NAME] & [TRUST...]" — when an ampersand is followed
  * anywhere by trust language, strip from the last such ampersand to end.
@@ -252,17 +277,8 @@ static int strip_and_trust(char *s, int *flags)
 
         /* Quick-strip trust keywords from the right-side copy so we are
          * left with just the person name for comparison. */
-        static const char *tkw[] = {
-            "REVOCABLE LIVING TRUST", "IRREVOCABLE LIVING TRUST",
-            "REVOCABLE INTER VIVOS TRUST", "IRREVOCABLE INTER VIVOS TRUST",
-            "INTER VIVOS TRUST", "LIVING TRUST",
-            "IRREVOCABLE TRUST", "REVOCABLE TRUST",
-            "FAMILY TRUST", "LAND TRUST", "BLIND TRUST",
-            "MARITAL TRUST", "BYPASS TRUST", "DYNASTY TRUST",
-            "TRUST", NULL
-        };
-        for (int ki = 0; tkw[ki]; ki++) {
-            char *tp = find_word(right_name, tkw[ki]);
+        for (int ki = 0; trust_keywords_quick[ki]; ki++) {
+            char *tp = find_word(right_name, trust_keywords_quick[ki]);
             if (tp) { *tp = '\0'; break; }
         }
         rtrim(right_name);
@@ -354,17 +370,8 @@ static int extract_cotenant(char *s, int *flags)
     if (rwords < 2) return 0;
 
     /* Quick-strip trust keywords from left → entity base name for comparison */
-    static const char *tkw[] = {
-        "REVOCABLE LIVING TRUST", "IRREVOCABLE LIVING TRUST",
-        "REVOCABLE INTER VIVOS TRUST", "IRREVOCABLE INTER VIVOS TRUST",
-        "INTER VIVOS TRUST", "LIVING TRUST",
-        "IRREVOCABLE TRUST", "REVOCABLE TRUST",
-        "FAMILY TRUST", "LAND TRUST", "BLIND TRUST",
-        "MARITAL TRUST", "BYPASS TRUST", "DYNASTY TRUST",
-        "TRUST", NULL
-    };
-    for (int ki = 0; tkw[ki]; ki++) {
-        char *tp = find_word(left, tkw[ki]);
+    for (int ki = 0; trust_keywords_quick[ki]; ki++) {
+        char *tp = find_word(left, trust_keywords_quick[ki]);
         if (tp) { *tp = '\0'; break; }
     }
     rtrim(left);
@@ -1084,11 +1091,11 @@ static void collapse_spaced_acronym(char *s)
                     oi += rlen;
                 }
             } else {
-                if (oi > 0) out[oi++] = ' ';
-                out[oi++] = *wstart;
+                if (oi > 0 && oi < sizeof(out) - 1) out[oi++] = ' ';
+                if (oi < sizeof(out) - 1) out[oi++] = *wstart;
             }
         } else {
-            if (oi > 0) out[oi++] = ' ';
+            if (oi > 0 && oi < sizeof(out) - 1) out[oi++] = ' ';
             if (oi + wlen < sizeof(out)) {
                 memcpy(out + oi, wstart, wlen);
                 oi += wlen;

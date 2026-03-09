@@ -269,16 +269,16 @@ int name_clean(const char *raw, NameResult *result)
         }
         if (wc == 1 && strchr(start, ' ') != NULL &&
             !in_table(result->cleaned, upper_words)) {
-            /* Short single-word results (≤4 chars, e.g. "HEB", "KJ") are
-             * likely a name or initials — let the AI decide the correct
-             * form rather than blindly reverting to trust language. */
-            if (strlen(result->cleaned) <= 3) {
+            /* Short single-word results (≤3 chars, e.g. "HEB") are
+             * likely initials — let the AI decide the correct form
+             * rather than blindly reverting to trust language. */
+            size_t clen = strlen(result->cleaned);
+            if (clen <= 3) {
                 result->flags |= NAME_FLAG_NEEDS_AI;
             } else {
                 /* Longer single words (e.g. "MAXWELL") are surnames —
                  * append "FAMILY" to create a usable mail label instead
                  * of reverting to the full trust name. */
-                size_t clen = strlen(result->cleaned);
                 if (clen + 7 < NAME_MAX_LEN) { /* 7 = strlen(" FAMILY") */
                     memcpy(result->cleaned + clen, " FAMILY", 8);
                 }
