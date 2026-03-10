@@ -388,24 +388,17 @@ int name_clean(const char *raw, NameResult *result)
             if (clen <= 3) {
                 result->flags |= NAME_FLAG_NEEDS_AI;
             } else {
-                /* Longer single words (e.g. "MAXWELL") are surnames.
-                 * If the original was a Family Trust, append "FAMILY";
-                 * otherwise keep "TRUST" so the label stays useful
-                 * (e.g. "Maxwell Living Trust" → "Maxwell Trust"). */
-                int has_family = 0;
-                for (const char *fp = start; *fp; fp++) {
-                    if ((fp[0] == 'F' || fp[0] == 'f') &&
-                        _strnicmp(fp, "FAMILY", 6) == 0 &&
-                        (fp == start || !isalpha((unsigned char)fp[-1])) &&
-                        !isalpha((unsigned char)fp[6])) {
-                        has_family = 1; break;
-                    }
-                }
-                if (has_family && clen + 7 < NAME_MAX_LEN) {
-                    memcpy(result->cleaned + clen, " FAMILY", 8);
-                } else if (!has_family && clen + 6 < NAME_MAX_LEN) {
-                    memcpy(result->cleaned + clen, " TRUST", 7);
-                }
+                /* Longer single words (e.g. "MAXWELL") mean trust
+                 * stripping ate everything but the surname.  Revert to
+                 * the full original (cleaned of whitespace/typos) so
+                 * the trust name stays intact on the mailing label
+                 * (e.g. "MAXWELL LIVING TRUST" → "Maxwell Living Trust"). */
+                size_t slen2 = strlen(start);
+                if (slen2 >= NAME_MAX_LEN) slen2 = NAME_MAX_LEN - 1;
+                memcpy(result->cleaned, start, slen2);
+                result->cleaned[slen2] = '\0';
+                for (char *up = result->cleaned; *up; up++)
+                    *up = (char)toupper((unsigned char)*up);
             }
         }
 
