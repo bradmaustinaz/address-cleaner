@@ -90,6 +90,63 @@ static const char *lower_words[] = {
     NULL
 };
 
+/* =========================================================================
+ * Truncated first-name prefix table
+ *
+ * These are uppercase prefixes that are unambiguously incomplete forms of
+ * common US first names — they are not valid standalone names in their own
+ * right.  When the first word of a cleaned name (or the word immediately
+ * after '&') matches one of these prefixes and is followed by at least one
+ * more word, NAME_FLAG_NEEDS_AI is set so the LLM can correct the typo
+ * (e.g. "MICHAE & HEIDI WILLIAMS" → "Michael & Heidi Williams").
+ * ====================================================================== */
+
+static const char *trunc_first_name_prefixes[] = {
+    "MICHAE",   /* Michael   */ "MICHA",    /* Michael   */
+    "BARBAR",   /* Barbara   */ "BARBA",    /* Barbara   */
+    "RICHAR",   /* Richard   */
+    "JENNIF",   /* Jennifer  */
+    "ELIZAB",   /* Elizabeth */
+    "WILLIA",   /* William   */
+    "PATRIC",   /* Patricia / Patrick (PATRIC alone is not a US name) */
+    "ROBER",    /* Robert    */
+    "CHARLE",   /* Charles   */
+    "SUSA",     /* Susan     */
+    "MARGAR",   /* Margaret  */
+    "DOROTH",   /* Dorothy   */
+    "MATTHE",   /* Matthew   */
+    "ANTHON",   /* Anthony   */
+    "CATHERI",  /* Catherine */ "KATHERI",  /* Katherine */
+    "KATHLE",   /* Kathleen  */
+    "BENJAM",   /* Benjamin  */
+    "TIMOTH",   /* Timothy   */
+    "BEVERL",   /* Beverly   */
+    "DEBOR",    /* Deborah   */
+    "VIRGINI",  /* Virginia  */
+    "LAWREN",   /* Lawrence  */
+    "MARILY",   /* Marilyn   */
+    "THERES",   /* Theresa / Teresa */
+    "SHIRL",    /* Shirley   */
+    "HAROL",    /* Harold    */
+    "RAYMON",   /* Raymond   */
+    "PHILLI",   /* Phillip / Philip */
+    "DOUGL",    /* Douglas   */
+    "JONATH",   /* Jonathan  */
+    "CHARLOT",  /* Charlotte */
+    "GERALDI",  /* Geraldine */
+    "CHRISTIN", /* Christine / Christina */
+    "STEPHANI", /* Stephanie */
+    "JACQUEL",  /* Jacqueline */
+    "SAMANTH",  /* Samantha  */
+    "FREDERI",  /* Frederick / Frederica */
+    "THEODO",   /* Theodore / Theodora */
+    "LEONAR",   /* Leonard   */
+    "TERREN",   /* Terrence  */
+    "LORRAI",   /* Lorraine  */
+    "CONSTAN",  /* Constance / Constantine */
+    NULL
+};
+
 static int str_ieq(const char *a, const char *b)
 {
     while (*a && *b) {
@@ -103,6 +160,22 @@ static int in_table(const char *word, const char **table)
 {
     for (int i = 0; table[i]; i++)
         if (str_ieq(word, table[i])) return 1;
+    return 0;
+}
+
+/* Returns 1 if the word (any case, length wlen) is a known truncated first-name
+ * prefix — i.e. it's listed in trunc_first_name_prefixes[]. */
+static int is_trunc_first_name(const char *word, size_t wlen)
+{
+    if (wlen < 4 || wlen > 9) return 0;
+    char upper[16] = {0};
+    size_t k;
+    for (k = 0; k < wlen && k < 15; k++)
+        upper[k] = (char)toupper((unsigned char)word[k]);
+    upper[k] = '\0';
+    for (int i = 0; trunc_first_name_prefixes[i]; i++)
+        if (strcmp(upper, trunc_first_name_prefixes[i]) == 0)
+            return 1;
     return 0;
 }
 
@@ -401,6 +474,36 @@ int name_clean(const char *raw, NameResult *result)
                         break;
                     }
                 }
+            }
+        }
+
+        /* Detect truncated first names that survive rules_apply unchanged
+         * because they look like ordinary words (e.g. "MICHAE" from "Michael",
+         * "BARBAR" from "Barbara").  Walk word-0 and every word right after
+         * '&' — both are first-name positions.  Only flag when the candidate
+         * is followed by at least one more word (confirming it is a first
+         * name, not a lone surname).  Works regardless of input_all_upper
+         * because the truncation is a data error, not a casing question. */
+        if (!(result->flags & NAME_FLAG_NEEDS_AI)) {
+            const char *p3  = result->cleaned;
+            int chk_next    = 1; /* word-0 is always a first-name candidate */
+            while (*p3 && !(result->flags & NAME_FLAG_NEEDS_AI)) {
+                while (*p3 && isspace((unsigned char)*p3)) p3++;
+                if (!*p3) break;
+                const char *fw = p3;
+                while (*p3 && !isspace((unsigned char)*p3)) p3++;
+                size_t fwlen = (size_t)(p3 - fw);
+                int is_amp   = (fwlen == 1 && fw[0] == '&');
+
+                if (chk_next && !is_amp) {
+                    /* Only flag if at least one more token follows this word */
+                    const char *peek = p3;
+                    while (*peek && isspace((unsigned char)*peek)) peek++;
+                    if (*peek && is_trunc_first_name(fw, fwlen))
+                        result->flags |= NAME_FLAG_NEEDS_AI;
+                }
+                /* The word immediately after '&' is the next candidate */
+                chk_next = is_amp;
             }
         }
 
