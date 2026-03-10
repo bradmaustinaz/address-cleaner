@@ -33,6 +33,8 @@ automatically fixed.
 
 Both the **in-app setup wizard** (first-run prompt) and **`setup.bat`** detect your GPU automatically and download the appropriate build — CUDA for NVIDIA, Vulkan for AMD, CPU otherwise. To set up manually, choose the variant that matches your hardware.
 
+> **Restricted environments:** Setup stores all temporary files (downloaded zips, PowerShell scripts, extraction output) in a local `tmp\` directory next to the executable — never in `%TEMP%`, `%APPDATA%`, or `%LOCALAPPDATA%`. This avoids issues in corporate environments where AppData or the system temp folder is restricted. The `tmp\` directory is automatically removed after setup completes.
+
 > **Note:** `nameclean.exe` always launches llama-server with `--n-gpu-layers 0` (CPU
 > inference), regardless of which build is installed. Even with a CUDA or Vulkan build,
 > computation runs on the CPU. To enable GPU offload, edit the flag in `llm.c` and rebuild.
@@ -107,7 +109,7 @@ File: `qwen2.5-3b-instruct-q4_k_m.gguf`
 Place it in the **`ai\` folder** next to `nameclean.exe`. The app discovers any `*.gguf` file
 in that directory automatically — filename does not matter.
 
-Both `setup.bat` and the in-app setup wizard handle this download automatically.
+Both `setup.bat` and the in-app setup wizard handle this download automatically. All downloads use a local `tmp\` directory (not the system temp folder), so no AppData access is required.
 
 ---
 
@@ -131,6 +133,9 @@ nameclean\
     cublas64_12.dll                          ← CUDA build only
     cublasLt64_12.dll                        ← CUDA build only
     qwen2.5-3b-instruct-q4_k_m.gguf        ← AI model (~2 GB)
+
+  [transient — created during setup, auto-cleaned]
+  tmp\                                       ← local temp dir (not AppData)
 ```
 
 ---

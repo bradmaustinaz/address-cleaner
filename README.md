@@ -94,6 +94,8 @@ setup.bat
 
 The script does the same download, placing everything in an `ai\` subdirectory next to `nameclean.exe`. Safe to re-run — skips components already present. To remove AI, delete the `ai\` folder.
 
+> **Restricted environments:** All temporary files (downloads, scripts, extraction) are stored in a local `tmp\` directory next to the executable — not in `%TEMP%` or AppData. This works in corporate environments where roaming/local AppData is locked down. The `tmp\` directory is cleaned up automatically after setup completes.
+
 **Startup:** On first launch after AI is installed, a splash screen appears while the model loads (60–90 seconds typical). The main window opens automatically when the model is ready. If startup times out or fails, the app falls back to rules-only mode.
 
 **Status bar shows:**
@@ -158,6 +160,7 @@ Address Cleaner/
 │   ├── llama-server.exe
 │   ├── ggml.dll / llama.dll
 │   └── qwen2.5-3b-instruct-q4_k_m.gguf
+├── tmp\            — Temporary files during setup (auto-cleaned after completion)
 └── logs\           — Session logs (created automatically on first Clean)
     └── session_YYYYMMDD_HHMMSS.tsv
 ```
