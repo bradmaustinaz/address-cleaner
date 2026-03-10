@@ -389,9 +389,19 @@ int name_clean(const char *raw, NameResult *result)
                 result->flags |= NAME_FLAG_NEEDS_AI;
             } else {
                 /* Longer single words (e.g. "MAXWELL") are surnames —
-                 * append "FAMILY" to create a usable mail label instead
-                 * of reverting to the full trust name. */
-                if (clen + 7 < NAME_MAX_LEN) { /* 7 = strlen(" FAMILY") */
+                 * append "FAMILY" only when the original was a Family
+                 * Trust; other trust types (e.g. "Maxwell Living Trust")
+                 * should not get "Family" appended. */
+                int has_family = 0;
+                for (const char *fp = start; *fp; fp++) {
+                    if ((fp[0] == 'F' || fp[0] == 'f') &&
+                        _strnicmp(fp, "FAMILY", 6) == 0 &&
+                        (fp == start || !isalpha((unsigned char)fp[-1])) &&
+                        !isalpha((unsigned char)fp[6])) {
+                        has_family = 1; break;
+                    }
+                }
+                if (has_family && clen + 7 < NAME_MAX_LEN) {
                     memcpy(result->cleaned + clen, " FAMILY", 8);
                 }
             }
