@@ -29,7 +29,7 @@ static HANDLE          g_proc    = NULL; /* llama-server.exe process handle */
 static HANDLE          g_thread  = NULL; /* background startup thread        */
 static volatile LONG   g_state   = 0;
 static HINTERNET       g_session = NULL; /* shared WinHTTP session           */
-static char            g_model_path[MAX_PATH] = {0};
+static char            g_model_path[MAX_PATH * 2] = {0};
 
 /* =========================================================================
  * Internal helpers: locate files in ai\ subdirectory next to the exe
@@ -54,7 +54,7 @@ static void get_ai_dir(char *buf, size_t bufsz)
 /* Find the first *.gguf in dir.  Returns 1 on success. */
 static int find_model(const char *dir, char *out, size_t outsz)
 {
-    char pattern[MAX_PATH];
+    char pattern[MAX_PATH + 8];
     snprintf(pattern, sizeof(pattern), "%s*.gguf", dir);
     WIN32_FIND_DATAA fd;
     HANDLE h = FindFirstFileA(pattern, &fd);
@@ -302,6 +302,37 @@ static void json_escape(const char *src, char *dst, size_t dstsz)
 }
 
 /* =========================================================================
+ * GPU detection
+ * ====================================================================== */
+
+/*
+ * detect_gpu_layers — enumerate display adapters via EnumDisplayDevicesA
+ * (user32, already linked via -mwindows — no new deps needed).
+ *
+ * Returns 99 (offload all layers) when a real GPU is found, 0 for CPU-only.
+ * 99 covers every 7B-class model (≤36 transformer layers); llama-server
+ * clamps the value to however many layers the loaded model actually has.
+ *
+ * If llama-server.exe was compiled without GPU support (CUDA / Vulkan),
+ * --n-gpu-layers > 0 is harmless: it logs a warning and falls back to CPU.
+ */
+static int detect_gpu_layers(void)
+{
+    DISPLAY_DEVICEA dd;
+    dd.cb = sizeof(dd);
+    for (DWORD i = 0; EnumDisplayDevicesA(NULL, i, &dd, 0); i++) {
+        /* Skip inactive and mirroring adapters */
+        if (!(dd.StateFlags & DISPLAY_DEVICE_ACTIVE))          continue;
+        if (  dd.StateFlags & DISPLAY_DEVICE_MIRRORING_DRIVER) continue;
+        /* Skip software / remote-desktop adapters */
+        if (strstr(dd.DeviceString, "Microsoft Basic Render Driver")) continue;
+        if (strstr(dd.DeviceString, "Remote Desktop"))              continue;
+        return 99;   /* real GPU found */
+    }
+    return 0;        /* no GPU — CPU-only */
+}
+
+/* =========================================================================
  * Background startup thread
  * ====================================================================== */
 
@@ -313,7 +344,7 @@ static DWORD WINAPI startup_thread(LPVOID param)
     get_ai_dir(ai_dir, sizeof(ai_dir));
 
     /* Verify llama-server.exe exists in ai\ */
-    char server_exe[MAX_PATH];
+    char server_exe[MAX_PATH + 20];
     snprintf(server_exe, sizeof(server_exe), "%sllama-server.exe", ai_dir);
     if (GetFileAttributesA(server_exe) == INVALID_FILE_ATTRIBUTES) {
         InterlockedExchange(&g_state, -1);
@@ -326,18 +357,21 @@ static DWORD WINAPI startup_thread(LPVOID param)
         return 0;
     }
 
+    /* Auto-detect GPU; pass layer count to llama-server */
+    int gpu_layers = detect_gpu_layers();
+
     /* Build command line */
-    char cmd[MAX_PATH * 2 + 256];
+    char cmd[MAX_PATH * 3 + 256];   /* server_exe + model_path + flags */
     snprintf(cmd, sizeof(cmd),
         "\"%s\""
         " --model \"%s\""
         " --port %d"
         " --ctx-size 2048"
         " --n-predict 48"
-        " --n-gpu-layers 0"  /* CPU-only: safe on work PCs without GPU drivers */
+        " --n-gpu-layers %d"
         " --threads 4"
         " --log-disable",
-        server_exe, g_model_path, LLM_PORT);
+        server_exe, g_model_path, LLM_PORT, gpu_layers);
 
     /* Launch server process, suppressing its console window */
     STARTUPINFOA si;
@@ -401,7 +435,7 @@ void llm_init(void)
     /* Quick pre-check: if there's no server exe in ai\, don't start a thread */
     char ai_dir[MAX_PATH];
     get_ai_dir(ai_dir, sizeof(ai_dir));
-    char server_exe[MAX_PATH];
+    char server_exe[MAX_PATH + 20];
     snprintf(server_exe, sizeof(server_exe), "%sllama-server.exe", ai_dir);
     if (GetFileAttributesA(server_exe) == INVALID_FILE_ATTRIBUTES) {
         InterlockedExchange(&g_state, -1);

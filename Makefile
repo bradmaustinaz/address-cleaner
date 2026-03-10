@@ -6,6 +6,7 @@
 # Debug:   make DEBUG=1
 
 CC      = gcc
+RC      = windres
 CFLAGS  = -Wall -Wextra -std=c99 -O2
 LDFLAGS = -mwindows -lcomctl32 -lgdi32 -lwinhttp -lshell32
 
@@ -15,8 +16,9 @@ ifdef DEBUG
   LDFLAGS  = -mconsole -lcomctl32 -lgdi32 -lwinhttp -lshell32
 endif
 
-SRCDIR = src
-TARGET = nameclean.exe
+SRCDIR  = src
+RESDIR  = res
+TARGET  = nameclean.exe
 
 SRCS = \
   $(SRCDIR)/main.c   \
@@ -27,27 +29,35 @@ SRCS = \
   $(SRCDIR)/llm.c    \
   $(SRCDIR)/setup.c  \
   $(SRCDIR)/slog.c   \
-  $(SRCDIR)/splash.c
+  $(SRCDIR)/splash.c \
+  $(SRCDIR)/update.c
 
-OBJS = $(SRCS:.c=.o)
+OBJS   = $(SRCS:.c=.o)
+RC_SRC = $(RESDIR)/resources.rc
+RC_OBJ = $(RESDIR)/resources.o
 
 .PHONY: all clean
 
 all: $(TARGET)
 
-$(TARGET): $(OBJS)
+$(TARGET): $(OBJS) $(RC_OBJ)
 	$(CC) -o $@ $^ $(LDFLAGS)
 	@echo Built $(TARGET)
 
 $(SRCDIR)/%.o: $(SRCDIR)/%.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+# Compile the .rc resource script (icon, etc.) into a COFF object
+$(RC_OBJ): $(RC_SRC) $(RESDIR)/app.ico
+	$(RC) --include-dir=$(RESDIR) $(RC_SRC) -O coff -o $(RC_OBJ)
+
 clean:
-	-del /f /q $(subst /,\,$(OBJS)) $(TARGET) 2>NUL
+	-rm -f $(OBJS) $(RC_OBJ) $(TARGET)
 
 # Header dependencies
-$(SRCDIR)/main.o:   $(SRCDIR)/gui.h $(SRCDIR)/llm.h $(SRCDIR)/setup.h $(SRCDIR)/splash.h
-$(SRCDIR)/gui.o:    $(SRCDIR)/gui.h $(SRCDIR)/tsv.h $(SRCDIR)/names.h $(SRCDIR)/rules.h $(SRCDIR)/llm.h $(SRCDIR)/slog.h $(SRCDIR)/splash.h
+$(SRCDIR)/main.o:   $(SRCDIR)/gui.h $(SRCDIR)/llm.h $(SRCDIR)/setup.h $(SRCDIR)/splash.h $(SRCDIR)/update.h
+$(SRCDIR)/gui.o:    $(SRCDIR)/gui.h $(SRCDIR)/tsv.h $(SRCDIR)/names.h $(SRCDIR)/rules.h $(SRCDIR)/llm.h $(SRCDIR)/slog.h $(SRCDIR)/splash.h $(SRCDIR)/update.h
+$(SRCDIR)/update.o: $(SRCDIR)/update.h
 $(SRCDIR)/splash.o: $(SRCDIR)/splash.h $(SRCDIR)/llm.h
 $(SRCDIR)/tsv.o:    $(SRCDIR)/tsv.h
 $(SRCDIR)/names.o:  $(SRCDIR)/names.h $(SRCDIR)/rules.h $(SRCDIR)/llm.h

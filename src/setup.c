@@ -3,6 +3,7 @@
 #include <winhttp.h>
 #include <commctrl.h>
 #include <shellapi.h>
+#include <commdlg.h>
 #include <stdio.h>
 #include <string.h>
 #include "setup.h"
@@ -28,6 +29,10 @@
 #define MODEL_URL       "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf"
 #define MODEL_FILENAME  "qwen2.5-3b-instruct-q4_k_m.gguf"
 
+#define FINETUNE_MODEL_URL \
+    "https://huggingface.co/bradmaustinaz/Realty-Mailing-Address-Q4_K_M-GGUF/resolve/main/realty-mailing-address-q4_k_m.gguf"
+#define FINETUNE_MODEL_FILENAME  "realty-mailing-address-q4_k_m.gguf"
+
 static const wchar_t GITHUB_RELEASE_URL[] =
     L"https://api.github.com/repos/ggml-org/llama.cpp/releases/latest";
 
@@ -40,9 +45,12 @@ static HWND          s_hSub      = NULL;
 static HWND          s_hProg     = NULL;
 static HWND          s_hBtn      = NULL;
 static HFONT         s_hBoldFont = NULL;
-static volatile LONG s_cancel    = 0;
-static volatile LONG s_result    = 0;
+static volatile LONG s_cancel      = 0;
+static volatile LONG s_result      = 0;
+static volatile LONG s_skip_model  = 0;
 static char          s_substatus[256];
+static char          s_chosen_model_url[512]      = {0};
+static char          s_chosen_model_filename[256] = {0};
 
 /* =========================================================================
  * File helpers
@@ -83,6 +91,114 @@ static int has_model(void)
     if (h == INVALID_HANDLE_VALUE) return 0;
     FindClose(h);
     return 1;
+}
+
+/* =========================================================================
+ * Model picker dialog — plain Win32, no comctl32 v6 required
+ * Returns: 1=fine-tuned, 2=qwen2.5, 3=browse (fills out_path), 0=skip
+ * ====================================================================== */
+
+#define PICKER_CLASS   "NameCleanModelPicker"
+#define PICKER_W       440
+#define PICKER_H       230
+#define IDC_PK_FINE    401
+#define IDC_PK_QWEN    402
+#define IDC_PK_BROWSE  403
+#define IDC_PK_SKIP    404
+
+static volatile int s_picker_choice = 0;
+
+static LRESULT CALLBACK picker_wnd_proc(HWND hwnd, UINT msg,
+                                         WPARAM wp, LPARAM lp)
+{
+    (void)lp;
+    switch (msg) {
+    case WM_CREATE: {
+        HFONT hf = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+        int bw = PICKER_W - 40, bh = 34, x = 20, gap = 40;
+
+        HWND hLbl = CreateWindowExA(0, "STATIC",
+            "No AI model found. Select an option:",
+            WS_CHILD | WS_VISIBLE | SS_LEFT,
+            x, 14, bw, 20, hwnd, NULL, NULL, NULL);
+        SendMessageA(hLbl, WM_SETFONT, (WPARAM)hf, FALSE);
+
+        static const char *labels[] = {
+            "Download Fine-Tuned Model (Recommended, ~2 GB)",
+            "Download Qwen2.5-3B  (general-purpose, ~2 GB)",
+            "Browse for local .gguf file...",
+            "Skip  (run without AI)",
+        };
+        static const int ids[] = {
+            IDC_PK_FINE, IDC_PK_QWEN, IDC_PK_BROWSE, IDC_PK_SKIP
+        };
+        for (int i = 0; i < 4; i++) {
+            HWND hb = CreateWindowExA(0, "BUTTON", labels[i],
+                WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                x, 44 + i * gap, bw, bh,
+                hwnd, (HMENU)(size_t)ids[i], NULL, NULL);
+            SendMessageA(hb, WM_SETFONT, (WPARAM)hf, FALSE);
+        }
+        return 0;
+    }
+    case WM_COMMAND:
+        s_picker_choice = LOWORD(wp);
+        DestroyWindow(hwnd);
+        PostQuitMessage(0);
+        return 0;
+    case WM_CLOSE:
+        s_picker_choice = IDC_PK_SKIP;
+        DestroyWindow(hwnd);
+        PostQuitMessage(0);
+        return 0;
+    }
+    return DefWindowProcA(hwnd, msg, wp, lp);
+}
+
+static int pick_model_source(char *out_path, size_t out_path_sz)
+{
+    s_picker_choice = IDC_PK_SKIP;
+
+    WNDCLASSEXA wc;
+    ZeroMemory(&wc, sizeof(wc));
+    wc.cbSize        = sizeof(wc);
+    wc.lpfnWndProc   = picker_wnd_proc;
+    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+    wc.lpszClassName = PICKER_CLASS;
+    RegisterClassExA(&wc);
+
+    int sx = GetSystemMetrics(SM_CXSCREEN);
+    int sy = GetSystemMetrics(SM_CYSCREEN);
+    HWND hwnd = CreateWindowExA(WS_EX_TOPMOST, PICKER_CLASS,
+        "Address Cleaner \x97 Select AI Model",
+        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
+        (sx - PICKER_W) / 2, (sy - PICKER_H) / 2,
+        PICKER_W, PICKER_H, NULL, NULL, NULL, NULL);
+    if (!hwnd) return 0;
+
+    ShowWindow(hwnd, SW_SHOW);
+    UpdateWindow(hwnd);
+
+    MSG msg;
+    while (GetMessage(&msg, NULL, 0, 0) > 0) {
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
+    }
+
+    if (s_picker_choice == IDC_PK_FINE)  return 1;
+    if (s_picker_choice == IDC_PK_QWEN)  return 2;
+    if (s_picker_choice != IDC_PK_BROWSE) return 0;
+
+    /* Browse */
+    OPENFILENAMEA ofn;
+    ZeroMemory(&ofn, sizeof(ofn));
+    ofn.lStructSize = sizeof(ofn);
+    ofn.lpstrFilter = "GGUF Models (*.gguf)\0*.gguf\0All Files (*.*)\0*.*\0";
+    ofn.lpstrFile   = out_path;
+    ofn.nMaxFile    = (DWORD)out_path_sz;
+    ofn.Flags       = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+    ofn.lpstrTitle  = "Select GGUF Model File";
+    return GetOpenFileNameA(&ofn) ? 3 : 0;
 }
 
 /* =========================================================================
@@ -633,16 +749,21 @@ static DWORD WINAPI setup_thread(LPVOID param)
         if (s_cancel) goto done;
     }
 
-    if (need_model && !s_cancel) {
-        /* --- Download model --- */
+    if (need_model && !s_cancel && !s_skip_model) {
+        /* --- Download model (URL chosen by pick_model_source on main thread) --- */
+        const char *model_url  = s_chosen_model_url[0]
+                                 ? s_chosen_model_url  : MODEL_URL;
+        const char *model_file = s_chosen_model_filename[0]
+                                 ? s_chosen_model_filename : MODEL_FILENAME;
+
         PostMessage(hwnd, WM_SETUP_STATUS, 0,
                     (LPARAM)"Downloading AI model (~2 GB)...");
         PostMessage(hwnd, WM_SETUP_PROGRESS, 0, 0);
 
-        char model_path[MAX_PATH + 64];
-        snprintf(model_path, sizeof(model_path), "%s%s", ai_dir, MODEL_FILENAME);
+        char model_path[MAX_PATH + 260];
+        snprintf(model_path, sizeof(model_path), "%s%s", ai_dir, model_file);
 
-        if (!download_to_file(MODEL_URL, model_path, hwnd)) {
+        if (!download_to_file(model_url, model_path, hwnd)) {
             PostMessage(hwnd, WM_SETUP_STATUS, 0,
                 (LPARAM)"Model download failed.");
             snprintf(s_substatus, sizeof(s_substatus),
@@ -763,22 +884,67 @@ int setup_needed(void)
 
 int setup_run(HINSTANCE hInst)
 {
-    /* Ask the user before downloading anything */
-    int answer = MessageBoxA(NULL,
-        "AI components (llama-server and model) were not found.\n\n"
-        "Would you like to download them now?\n"
-        "Total download: ~2 GB\n\n"
-        "Click No to continue in rules-only mode (no AI).\n"
-        "You can also set up manually \x97 see README.",
-        "Address Cleaner \x97 AI Setup",
-        MB_YESNO | MB_ICONQUESTION);
+    int need_server = !has_server();
+    int need_model  = !has_model();
 
-    if (answer != IDYES) return 0;
+    /* Reset shared state */
+    InterlockedExchange(&s_cancel,     0);
+    InterlockedExchange(&s_result,     0);
+    InterlockedExchange(&s_skip_model, 0);
+    s_chosen_model_url[0]      = '\0';
+    s_chosen_model_filename[0] = '\0';
+    s_substatus[0]             = '\0';
 
-    /* Reset state */
-    InterlockedExchange(&s_cancel, 0);
-    InterlockedExchange(&s_result, 0);
-    s_substatus[0] = '\0';
+    /* --- If server is missing, ask permission before downloading --- */
+    if (need_server) {
+        const char *msg = need_model
+            ? "AI components (llama-server and model) were not found.\n\n"
+              "Would you like to download them now?\n"
+              "Total download: ~2 GB\n\n"
+              "Click No to continue in rules-only mode (no AI).\n"
+              "You can also set up manually \x97 see README."
+            : "The AI engine (llama-server) was not found.\n\n"
+              "Would you like to download it now?\n\n"
+              "Click No to continue in rules-only mode (no AI).";
+        if (MessageBoxA(NULL, msg, "Address Cleaner \x97 AI Setup",
+                        MB_YESNO | MB_ICONQUESTION) != IDYES)
+            return 0;
+    }
+
+    /* --- Model picker (when model is needed) --- */
+    if (need_model) {
+        char browse_path[MAX_PATH] = {0};
+        int src = pick_model_source(browse_path, sizeof(browse_path));
+
+        if (src == 0) {          /* Skip */
+            if (!need_server) return 0;
+            InterlockedExchange(&s_skip_model, 1);
+
+        } else if (src == 3) {   /* Browse — copy file immediately */
+            char ai_dir[MAX_PATH];
+            setup_get_ai_dir(ai_dir, sizeof(ai_dir));
+            CreateDirectoryA(ai_dir, NULL);
+            char *fname = strrchr(browse_path, '\\');
+            char dest[MAX_PATH + 260];
+            snprintf(dest, sizeof(dest), "%s%s",
+                     ai_dir, fname ? fname + 1 : browse_path);
+            CopyFileA(browse_path, dest, FALSE);
+            if (!need_server) return 1;  /* model handled, nothing else to do */
+            InterlockedExchange(&s_skip_model, 1);
+
+        } else if (src == 1) {   /* Fine-tuned */
+            strncpy(s_chosen_model_url,      FINETUNE_MODEL_URL,
+                    sizeof(s_chosen_model_url) - 1);
+            strncpy(s_chosen_model_filename, FINETUNE_MODEL_FILENAME,
+                    sizeof(s_chosen_model_filename) - 1);
+
+        } else {                 /* Qwen2.5 (src == 2) */
+            strncpy(s_chosen_model_url,      MODEL_URL,
+                    sizeof(s_chosen_model_url) - 1);
+            strncpy(s_chosen_model_filename, MODEL_FILENAME,
+                    sizeof(s_chosen_model_filename) - 1);
+        }
+    }
 
     /* Register window class */
     WNDCLASSEXA wc;
