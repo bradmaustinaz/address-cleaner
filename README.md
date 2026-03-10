@@ -70,9 +70,9 @@ nameclean\
 Requires [MinGW-w64](https://www.mingw-w64.org/) (GCC on PATH).
 
 ```bash
-make              # release build → nameclean.exe
-make DEBUG=1      # debug build (console window, symbols, log file)
-make clean        # remove .o files and exe
+mingw32-make              # release build → nameclean.exe
+mingw32-make DEBUG=1      # debug build (console window, symbols, log file)
+mingw32-make clean        # remove .o files and exe
 ```
 
 **Dependencies:** All linked libraries (`comctl32`, `gdi32`, `winhttp`) are standard Windows system DLLs. No external packages needed.
@@ -154,7 +154,7 @@ Address Cleaner/
 [runtime, not in repo]
 ├── config\         — Optional configuration files
 │   └── logo.png    — Custom logo (621×100 px recommended; any PNG accepted)
-├── ai\             — AI sidecar files (created by setup.bat)
+├── ai\             — AI sidecar files (created by setup wizard or setup.bat)
 │   ├── llama-server.exe
 │   ├── ggml.dll / llama.dll
 │   └── qwen2.5-3b-instruct-q4_k_m.gguf

@@ -31,13 +31,17 @@ The AI feature is entirely optional. Without it the rules engine still handles ~
 names correctly. With it, edge cases (reversed Last-First, typos, mangled words) are
 automatically fixed.
 
-### Option A — CPU-only build (default; recommended)
+Both the **in-app setup wizard** (first-run prompt) and **`setup.bat`** detect your GPU automatically and download the appropriate build — CUDA for NVIDIA, Vulkan for AMD, CPU otherwise. To set up manually, choose the variant that matches your hardware.
 
-`setup.bat` uses this option automatically. To set up manually:
+> **Note:** `nameclean.exe` always launches llama-server with `--n-gpu-layers 0` (CPU
+> inference), regardless of which build is installed. Even with a CUDA or Vulkan build,
+> computation runs on the CPU. To enable GPU offload, edit the flag in `llm.c` and rebuild.
+
+### Option A — CPU build (no GPU required)
 
 Download the **CPU** release of llama.cpp:
 <https://github.com/ggml-org/llama.cpp/releases>
-File: `llama-<version>-bin-win-noavx-x64.zip` or `-avx2-x64.zip`
+File: `llama-<version>-bin-win-cpu-x64.zip`
 
 Files to place in **`ai\` next to `nameclean.exe`**:
 
@@ -55,11 +59,11 @@ Files to place in **`ai\` next to `nameclean.exe`**:
 
 ---
 
-### Option B — CUDA / GPU-accelerated build (manual setup only)
+### Option B — CUDA / GPU-accelerated build
 
-> **Note:** `setup.bat` and the default launch flags use CPU-only mode (`--n-gpu-layers 0`).
-> GPU acceleration requires downloading a CUDA build of llama.cpp manually and editing
-> the `--n-gpu-layers` flag in `llm.c`.
+> GPU offload requires editing `--n-gpu-layers` in `llm.c` and rebuilding. The auto
+> setup downloads CUDA/Vulkan builds when a compatible GPU is detected, but still
+> runs CPU inference by default.
 
 Download the **CUDA 12.x** release of llama.cpp:
 <https://github.com/ggerganov/llama.cpp/releases>
@@ -103,7 +107,7 @@ File: `qwen2.5-3b-instruct-q4_k_m.gguf`
 Place it in the **`ai\` folder** next to `nameclean.exe`. The app discovers any `*.gguf` file
 in that directory automatically — filename does not matter.
 
-`setup.bat` handles this download automatically.
+Both `setup.bat` and the in-app setup wizard handle this download automatically.
 
 ---
 
