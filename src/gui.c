@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include "gui.h"
 #include "tsv.h"
 #include "names.h"
@@ -107,10 +108,28 @@ static void do_clean(void)
     /* --- Open session log (always on) ---------------------------------- */
     slog_open();
 
+    /* --- Pre-scan: detect whether the entire input list is uppercase --- */
+    {
+        int all_upper = 1;
+        int has_alpha = 0;
+        for (const char *sc = input; *sc; sc++) {
+            if (isalpha((unsigned char)*sc)) {
+                has_alpha = 1;
+                if (!isupper((unsigned char)*sc)) {
+                    all_upper = 0;
+                    break;
+                }
+            }
+        }
+        /* Only set the flag when the input actually contains letters */
+        name_set_list_all_upper(all_upper && has_alpha);
+    }
+
     /* --- Process line by line ------------------------------------------ */
     int n_cleaned = 0;
     int n_flagged = 0;
     int n_trust   = 0;
+    char prev_raw[NAME_MAX_LEN] = {0};   /* previous raw input for dedup */
 
     char *line = input;
     while (line && *line) {
@@ -126,8 +145,15 @@ static void do_clean(void)
         TsvRow row;
         tsv_parse_row(line, &row);
 
+        /* Skip exact duplicate consecutive rows (same raw input) */
+        const char *raw_field = tsv_field(&row, 0);
+        if (prev_raw[0] && strcmp(raw_field, prev_raw) == 0)
+            goto next_line;
+        strncpy(prev_raw, raw_field, NAME_MAX_LEN - 1);
+        prev_raw[NAME_MAX_LEN - 1] = '\0';
+
         NameResult nr;
-        name_clean(tsv_field(&row, 0), &nr);
+        name_clean(raw_field, &nr);
         slog_row(&nr, nr.ai_input[0] ? nr.ai_input : NULL,
                       nr.ai_output[0] ? nr.ai_output : NULL);
 
@@ -166,6 +192,9 @@ next_line:
 
     out_buf[out_pos] = '\0';
     SetWindowText(g_hOutput, out_buf);
+
+    /* Reset list-level uppercase flag for next run */
+    name_set_list_all_upper(0);
 
     /* --- Close logs and report ----------------------------------------- */
     slog_close(n_cleaned, n_flagged, n_trust);

@@ -7,12 +7,12 @@
 
 CC      = gcc
 CFLAGS  = -Wall -Wextra -std=c99 -O2
-LDFLAGS = -mwindows -lcomctl32 -lgdi32 -lwinhttp
+LDFLAGS = -mwindows -lcomctl32 -lgdi32 -lwinhttp -lshell32
 
 # Debug build: keeps console window open for stderr, adds symbols
 ifdef DEBUG
   CFLAGS  += -g -DDEBUG
-  LDFLAGS  = -mconsole -lcomctl32 -lgdi32 -lwinhttp
+  LDFLAGS  = -mconsole -lcomctl32 -lgdi32 -lwinhttp -lshell32
 endif
 
 SRCDIR = src
@@ -25,6 +25,7 @@ SRCS = \
   $(SRCDIR)/names.c  \
   $(SRCDIR)/rules.c  \
   $(SRCDIR)/llm.c    \
+  $(SRCDIR)/setup.c  \
   $(SRCDIR)/slog.c   \
   $(SRCDIR)/splash.c
 
@@ -45,11 +46,12 @@ clean:
 	-del /f /q $(subst /,\,$(OBJS)) $(TARGET) 2>NUL
 
 # Header dependencies
-$(SRCDIR)/main.o:   $(SRCDIR)/gui.h $(SRCDIR)/llm.h $(SRCDIR)/splash.h
+$(SRCDIR)/main.o:   $(SRCDIR)/gui.h $(SRCDIR)/llm.h $(SRCDIR)/setup.h $(SRCDIR)/splash.h
 $(SRCDIR)/gui.o:    $(SRCDIR)/gui.h $(SRCDIR)/tsv.h $(SRCDIR)/names.h $(SRCDIR)/rules.h $(SRCDIR)/llm.h $(SRCDIR)/slog.h $(SRCDIR)/splash.h
 $(SRCDIR)/splash.o: $(SRCDIR)/splash.h $(SRCDIR)/llm.h
 $(SRCDIR)/tsv.o:    $(SRCDIR)/tsv.h
 $(SRCDIR)/names.o:  $(SRCDIR)/names.h $(SRCDIR)/rules.h $(SRCDIR)/llm.h
 $(SRCDIR)/rules.o:  $(SRCDIR)/rules.h
 $(SRCDIR)/llm.o:    $(SRCDIR)/llm.h
+$(SRCDIR)/setup.o:  $(SRCDIR)/setup.h
 $(SRCDIR)/slog.o:   $(SRCDIR)/slog.h $(SRCDIR)/names.h

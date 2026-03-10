@@ -6,6 +6,16 @@
 #include "rules.h"
 #include "llm.h"
 
+/* List-level uppercase flag: set by the caller (gui.c) when every name
+ * in the current batch is already entirely uppercase.  Supplements the
+ * per-name input_all_upper check inside name_clean. */
+static int g_list_all_upper = 0;
+
+void name_set_list_all_upper(int flag)
+{
+    g_list_all_upper = !!flag;
+}
+
 /* =========================================================================
  * Exact-form table
  *
@@ -179,13 +189,27 @@ static void apply_title_case(char *s)
             if (wlen > 2 && orig[0]=='M' && orig[1]=='C' && isalpha((unsigned char)orig[2]))
                 word_start[2] = (char)toupper((unsigned char)word_start[2]);
 
-            /* Mac prefix: MacDonald — only when 4th char was uppercase in orig.
+            /* Mac prefix: MacDonald.
              * Require wlen >= 6 to avoid false positives on common words
              * like MACON (5), MACE (4), MACHO (5), MACRO (5). Shortest
-             * real Mac-surname: MacKay (6). */
+             * real Mac-surname: MacKay (6).
+             * Also skip common English words that start with "MAC" but
+             * are not surnames (e.g. MACHINE, MACRAME). */
             if (wlen > 5 && orig[0]=='M' && orig[1]=='A' && orig[2]=='C'
-                         && isupper((unsigned char)orig[3]))
-                word_start[3] = (char)toupper((unsigned char)word_start[3]);
+                         && isupper((unsigned char)orig[3])) {
+                static const char *mac_non_names[] = {
+                    "machine", "machines", "machete", "machetes",
+                    "macrame", "macaroni", "macabre", "macadam",
+                    "machination", "machinations", "machinist",
+                    NULL
+                };
+                int is_blocked = 0;
+                for (int bi = 0; mac_non_names[bi]; bi++)
+                    if (str_ieq(lower, mac_non_names[bi]))
+                        { is_blocked = 1; break; }
+                if (!is_blocked)
+                    word_start[3] = (char)toupper((unsigned char)word_start[3]);
+            }
 
             /* O' prefix: O'Brien */
             if (wlen > 2 && orig[0]=='O' && orig[1]=='\''
@@ -247,6 +271,21 @@ int name_clean(const char *raw, NameResult *result)
         return -1;
     }
 
+    /* Detect whether the original input is already entirely uppercase.
+     * When it is — or when the caller flagged the whole list as uppercase
+     * via name_set_list_all_upper — we preserve that casing and skip
+     * title-case conversion so the output matches the input convention. */
+    int input_all_upper = g_list_all_upper;
+    if (!input_all_upper) {
+        input_all_upper = 1;
+        for (const char *cp = start; *cp; cp++) {
+            if (isalpha((unsigned char)*cp) && !isupper((unsigned char)*cp)) {
+                input_all_upper = 0;
+                break;
+            }
+        }
+    }
+
     {
         size_t slen = strlen(start);
         if (slen >= NAME_MAX_LEN) slen = NAME_MAX_LEN - 1;
@@ -304,7 +343,7 @@ int name_clean(const char *raw, NameResult *result)
                 we[nw] = q2;
                 nw++;
             }
-            if (nw >= 2 && nw <= 5) {
+            if (nw >= 3 && nw <= 5) {
                 size_t lwlen = (size_t)(we[nw-1] - ws[nw-1]);
                 if (lwlen == 1 && isalpha((unsigned char)ws[nw-1][0])) {
                     /* Rebuild: words[1..nw-1] + " " + words[0] */
@@ -334,8 +373,10 @@ int name_clean(const char *raw, NameResult *result)
 
         /* Detect 2–4 char all-consonant words that title-case will render
          * incorrectly (e.g. "KJ" → "Kj", "JLS" → "Jls").  These are
-         * initials or abbreviations that the AI can fix. */
-        if (!(result->flags & NAME_FLAG_NEEDS_AI)) {
+         * initials or abbreviations that the AI can fix.
+         * Skip when input is all-uppercase — title case is not applied,
+         * so these words already render correctly in uppercase. */
+        if (!input_all_upper && !(result->flags & NAME_FLAG_NEEDS_AI)) {
             for (const char *q = result->cleaned; *q; ) {
                 while (*q && isspace((unsigned char)*q)) q++;
                 if (!*q) break;
@@ -363,7 +404,8 @@ int name_clean(const char *raw, NameResult *result)
             }
         }
 
-        apply_title_case(result->cleaned);
+        if (!input_all_upper)
+            apply_title_case(result->cleaned);
     } else {
         /* rules_apply stripped everything (e.g. "Not Available From The
          * Data Source" → erased by the junk table → "").  Use the
@@ -388,9 +430,39 @@ int name_clean(const char *raw, NameResult *result)
             strncpy(result->ai_output, ai_out, NAME_MAX_LEN - 1);
             result->ai_output[NAME_MAX_LEN - 1] = '\0';
 
-            strncpy(result->cleaned, ai_out, NAME_MAX_LEN - 1);
-            result->cleaned[NAME_MAX_LEN - 1] = '\0';
-            result->flags |= NAME_FLAG_WAS_AI;
+            /* Reject AI output that reintroduces trust language the
+             * rules engine already stripped (LLM hallucination). */
+            int ai_ok = 1;
+            if (result->flags & NAME_FLAG_WAS_TRUST) {
+                /* Case-insensitive search for "trust" as a whole word */
+                for (const char *tp = ai_out; *tp; tp++) {
+                    if (tolower((unsigned char)tp[0]) == 't' &&
+                        tolower((unsigned char)tp[1]) == 'r' &&
+                        tolower((unsigned char)tp[2]) == 'u' &&
+                        tolower((unsigned char)tp[3]) == 's' &&
+                        tolower((unsigned char)tp[4]) == 't') {
+                        /* Check word boundaries */
+                        int lb = (tp == ai_out) ||
+                                 !isalnum((unsigned char)*(tp - 1));
+                        int rb = !tp[5] ||
+                                 !isalnum((unsigned char)tp[5]);
+                        if (lb && rb) { ai_ok = 0; break; }
+                    }
+                    if (!tp[1] || !tp[2] || !tp[3] || !tp[4]) break;
+                }
+            }
+            if (ai_ok) {
+                /* When the input is all-uppercase, force the AI output back
+                 * to uppercase so the output convention matches the input. */
+                if (input_all_upper) {
+                    for (char *ap = ai_out; *ap; ap++)
+                        *ap = (char)toupper((unsigned char)*ap);
+                }
+
+                strncpy(result->cleaned, ai_out, NAME_MAX_LEN - 1);
+                result->cleaned[NAME_MAX_LEN - 1] = '\0';
+                result->flags |= NAME_FLAG_WAS_AI;
+            }
         }
     }
 

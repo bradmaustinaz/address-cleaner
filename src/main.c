@@ -20,6 +20,7 @@
 #include <commctrl.h>
 #include "gui.h"
 #include "llm.h"
+#include "setup.h"
 #include "splash.h"
 
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev,
@@ -43,6 +44,10 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev,
                    "Name Cleaner", MB_OK | MB_ICONERROR);
         return 1;
     }
+
+    /* Download AI dependencies if missing (asks user first) */
+    if (setup_needed())
+        setup_run(hInst);
 
     /* Start LLM sidecar in background (no-op if llama-server.exe not found) */
     llm_init();
