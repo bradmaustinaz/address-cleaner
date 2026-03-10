@@ -25,9 +25,13 @@
 #define CLASS_NAME    "NameCleanWnd"
 #define WINDOW_TITLE  "Name Cleaner"
 
+/* Application icon ID — must match res/resources.rc */
+#define IDI_APP_ICON  101
+
 /* =========================================================================
  * Globals
  * ====================================================================== */
+static HINSTANCE g_hInst;
 static HWND g_hwnd;
 static HWND g_hInput, g_hOutput;
 static HWND g_hBtnClean, g_hBtnCopy, g_hBtnClear;
@@ -456,6 +460,8 @@ LRESULT CALLBACK gui_wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
 HWND gui_create_window(HINSTANCE hInst)
 {
+    g_hInst = hInst;
+
     WNDCLASSEX wc;
     memset(&wc, 0, sizeof(wc));
     wc.cbSize        = sizeof(wc);
@@ -465,8 +471,14 @@ HWND gui_create_window(HINSTANCE hInst)
     wc.hCursor       = LoadCursor(NULL, IDC_ARROW);
     wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
     wc.lpszClassName = CLASS_NAME;
-    wc.hIcon         = LoadIcon(NULL, IDI_APPLICATION);
-    wc.hIconSm       = LoadIcon(NULL, IDI_APPLICATION);
+    /* Load the embedded app icon at both 32x32 and 16x16 sizes.
+     * Falls back silently to the generic icon if the resource is missing. */
+    wc.hIcon   = (HICON)LoadImage(hInst, MAKEINTRESOURCE(IDI_APP_ICON),
+                                  IMAGE_ICON, 32, 32, LR_DEFAULTCOLOR);
+    wc.hIconSm = (HICON)LoadImage(hInst, MAKEINTRESOURCE(IDI_APP_ICON),
+                                  IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
+    if (!wc.hIcon)   wc.hIcon   = LoadIcon(NULL, IDI_APPLICATION);
+    if (!wc.hIconSm) wc.hIconSm = LoadIcon(NULL, IDI_APPLICATION);
 
     if (!RegisterClassEx(&wc)) return NULL;
 

@@ -1,0 +1,10 @@
+/* Name Cleaner — Win32 resource script
+ * Compiled with windres; linked into the final .exe.
+ *
+ * Icon ID 101 is loaded in gui.c via:
+ *   LoadImage(hInst, MAKEINTRESOURCE(IDI_APP_ICON), IMAGE_ICON, w, h, LR_DEFAULTCOLOR)
+ */
+
+#define IDI_APP_ICON  101
+
+IDI_APP_ICON  ICON  "app.ico"
