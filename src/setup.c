@@ -12,7 +12,7 @@
  * ====================================================================== */
 
 #define SETUP_W          460
-#define SETUP_H          180
+#define SETUP_WIN_H      180
 #define SETUP_CLASS      "NameCleanSetup"
 
 #define IDC_SETUP_LABEL  301
@@ -35,7 +35,6 @@ static const wchar_t GITHUB_RELEASE_URL[] =
  * Dialog state
  * ====================================================================== */
 
-static HWND          s_hwnd      = NULL;
 static HWND          s_hLabel    = NULL;
 static HWND          s_hSub      = NULL;
 static HWND          s_hProg     = NULL;
@@ -68,7 +67,7 @@ static int has_server(void)
 {
     char ai[MAX_PATH];
     setup_get_ai_dir(ai, sizeof(ai));
-    char path[MAX_PATH];
+    char path[MAX_PATH + 32];
     snprintf(path, sizeof(path), "%sllama-server.exe", ai);
     return GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES;
 }
@@ -77,7 +76,7 @@ static int has_model(void)
 {
     char ai[MAX_PATH];
     setup_get_ai_dir(ai, sizeof(ai));
-    char pattern[MAX_PATH];
+    char pattern[MAX_PATH + 16];
     snprintf(pattern, sizeof(pattern), "%s*.gguf", ai);
     WIN32_FIND_DATAA fd;
     HANDLE h = FindFirstFileA(pattern, &fd);
@@ -98,7 +97,7 @@ static void detect_gpu(char *mode, size_t modesz)
     char tmpdir[MAX_PATH];
     GetTempPathA(MAX_PATH, tmpdir);
 
-    char ps_path[MAX_PATH], out_path[MAX_PATH];
+    char ps_path[MAX_PATH + 32], out_path[MAX_PATH + 32];
     snprintf(ps_path, sizeof(ps_path), "%ssetup_gpu.ps1", tmpdir);
     snprintf(out_path, sizeof(out_path), "%ssetup_gpu.txt", tmpdir);
 
@@ -142,7 +141,7 @@ static void detect_gpu(char *mode, size_t modesz)
             while (len > 0 && (p[len-1]==' '||p[len-1]=='\r'||p[len-1]=='\n'))
                 p[--len] = '\0';
             if (strcmp(p, "cuda") == 0 || strcmp(p, "vulkan") == 0)
-                strncpy(mode, p, modesz);
+                snprintf(mode, modesz, "%s", p);
         }
         fclose(rf);
     }
@@ -422,19 +421,24 @@ static int extract_zip(const char *zip_path, const char *dest_dir)
  * Copy server files from extracted dir into ai\
  * ====================================================================== */
 
+/* GCC inlines this into setup_thread and then computes worst-case path
+ * lengths using the caller's buffer sizes, producing false-positive
+ * -Wformat-truncation warnings.  The buffers are correct; suppress. */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-truncation"
 static int copy_server_files(const char *src_dir, const char *ai_dir)
 {
     /* The zip may contain files directly or in a single subdirectory */
-    char actual_src[MAX_PATH];
+    char actual_src[MAX_PATH * 2];
     strncpy(actual_src, src_dir, sizeof(actual_src));
     actual_src[sizeof(actual_src) - 1] = '\0';
 
-    char server_test[MAX_PATH];
+    char server_test[MAX_PATH + 32];
     snprintf(server_test, sizeof(server_test), "%s\\llama-server.exe", src_dir);
 
     if (GetFileAttributesA(server_test) == INVALID_FILE_ATTRIBUTES) {
         /* Search one level of subdirectories */
-        char search[MAX_PATH];
+        char search[MAX_PATH + 8];
         snprintf(search, sizeof(search), "%s\\*", src_dir);
         WIN32_FIND_DATAA fd;
         HANDLE h = FindFirstFileA(search, &fd);
@@ -443,7 +447,7 @@ static int copy_server_files(const char *src_dir, const char *ai_dir)
                 if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
                 if (fd.cFileName[0] == '.') continue;
 
-                char sub[MAX_PATH];
+                char sub[MAX_PATH * 2 + 32];
                 snprintf(sub, sizeof(sub), "%s\\%s\\llama-server.exe",
                          src_dir, fd.cFileName);
                 if (GetFileAttributesA(sub) != INVALID_FILE_ATTRIBUTES) {
@@ -457,20 +461,20 @@ static int copy_server_files(const char *src_dir, const char *ai_dir)
     }
 
     /* Copy llama-server.exe */
-    char src_file[MAX_PATH], dst_file[MAX_PATH];
+    char src_file[MAX_PATH * 2], dst_file[MAX_PATH + 32];
     snprintf(src_file, sizeof(src_file), "%s\\llama-server.exe", actual_src);
     snprintf(dst_file, sizeof(dst_file), "%sllama-server.exe", ai_dir);
     if (!CopyFileA(src_file, dst_file, FALSE)) return 0;
 
     /* Copy all DLLs */
-    char dll_search[MAX_PATH];
+    char dll_search[MAX_PATH * 2 + 16];
     snprintf(dll_search, sizeof(dll_search), "%s\\*.dll", actual_src);
     WIN32_FIND_DATAA fd;
     HANDLE h = FindFirstFileA(dll_search, &fd);
     if (h != INVALID_HANDLE_VALUE) {
         do {
             snprintf(src_file, sizeof(src_file), "%s\\%s", actual_src, fd.cFileName);
-            snprintf(dst_file, sizeof(dst_file), "%s%s", ai_dir, fd.cFileName);
+            snprintf(dst_file, sizeof(dst_file), "%s%s",   ai_dir,     fd.cFileName);
             CopyFileA(src_file, dst_file, FALSE);
         } while (FindNextFileA(h, &fd));
         FindClose(h);
@@ -478,6 +482,7 @@ static int copy_server_files(const char *src_dir, const char *ai_dir)
 
     return 1;
 }
+#pragma GCC diagnostic pop
 
 /* Recursively delete a directory tree */
 static void delete_directory(const char *dir)
@@ -573,7 +578,7 @@ static DWORD WINAPI setup_thread(LPVOID param)
 
         char tmpdir[MAX_PATH];
         GetTempPathA(MAX_PATH, tmpdir);
-        char zip_path[MAX_PATH];
+        char zip_path[MAX_PATH + 32];
         snprintf(zip_path, sizeof(zip_path), "%sllama_setup.zip", tmpdir);
 
         if (!download_to_file(download_url, zip_path, hwnd)) {
@@ -594,7 +599,7 @@ static DWORD WINAPI setup_thread(LPVOID param)
         PostMessage(hwnd, WM_SETUP_SUBSTATUS, 0, 0);
         PostMessage(hwnd, WM_SETUP_PROGRESS, 0, 0);
 
-        char extract_dir[MAX_PATH];
+        char extract_dir[MAX_PATH + 32];
         snprintf(extract_dir, sizeof(extract_dir), "%sllama_setup", tmpdir);
 
         if (!extract_zip(zip_path, extract_dir)) {
@@ -634,7 +639,7 @@ static DWORD WINAPI setup_thread(LPVOID param)
                     (LPARAM)"Downloading AI model (~2 GB)...");
         PostMessage(hwnd, WM_SETUP_PROGRESS, 0, 0);
 
-        char model_path[MAX_PATH];
+        char model_path[MAX_PATH + 64];
         snprintf(model_path, sizeof(model_path), "%s%s", ai_dir, MODEL_FILENAME);
 
         if (!download_to_file(MODEL_URL, model_path, hwnd)) {
@@ -764,8 +769,8 @@ int setup_run(HINSTANCE hInst)
         "Would you like to download them now?\n"
         "Total download: ~2 GB\n\n"
         "Click No to continue in rules-only mode (no AI).\n"
-        "You can also set up manually \xe2\x80\x94 see README.",
-        "Address Cleaner \xe2\x80\x94 AI Setup",
+        "You can also set up manually \x97 see README.",
+        "Address Cleaner \x97 AI Setup",
         MB_YESNO | MB_ICONQUESTION);
 
     if (answer != IDYES) return 0;
@@ -788,13 +793,13 @@ int setup_run(HINSTANCE hInst)
     int sx = GetSystemMetrics(SM_CXSCREEN);
     int sy = GetSystemMetrics(SM_CYSCREEN);
     int x  = (sx - SETUP_W) / 2;
-    int y  = (sy - SETUP_H) / 2;
+    int y  = (sy - SETUP_WIN_H) / 2;
 
     HWND hwnd = CreateWindowExA(
         WS_EX_TOPMOST,
-        SETUP_CLASS, "Address Cleaner \xe2\x80\x94 AI Setup",
+        SETUP_CLASS, "Address Cleaner \x97 AI Setup",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
-        x, y, SETUP_W, SETUP_H,
+        x, y, SETUP_W, SETUP_WIN_H,
         NULL, NULL, hInst, NULL);
 
     if (!hwnd) return 0;

@@ -83,12 +83,16 @@ make clean        # remove .o files and exe
 
 The core rules engine handles ~95% of names. For edge cases — reversed names, typos, ambiguous initials — an optional local AI model provides a second pass.
 
-**Quick setup (double-click):**
+**Quick setup — automatic (recommended):**
+
+On first launch, if the AI components are missing, the app offers to download them automatically. Click **Yes** and it handles everything: detects your GPU, downloads the right [llama.cpp](https://github.com/ggml-org/llama.cpp) build, extracts it, and downloads the [Qwen2.5-3B-Instruct Q4_K_M](https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF) model (~2 GB). Click **No** to continue in rules-only mode.
+
+**Alternative — manual script (double-click):**
 ```
 setup.bat
 ```
 
-The script downloads the correct [llama.cpp](https://github.com/ggml-org/llama.cpp) CPU release and the [Qwen2.5-3B-Instruct Q4_K_M](https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF) model (~2 GB), placing everything in an `ai\` subdirectory next to `nameclean.exe`. Safe to re-run — skips components already present. To remove AI, delete the `ai\` folder.
+The script does the same download, placing everything in an `ai\` subdirectory next to `nameclean.exe`. Safe to re-run — skips components already present. To remove AI, delete the `ai\` folder.
 
 **Startup:** On first launch after AI is installed, a splash screen appears while the model loads (60–90 seconds typical). The main window opens automatically when the model is ready. If startup times out or fails, the app falls back to rules-only mode.
 
@@ -140,9 +144,10 @@ Address Cleaner/
 │   ├── names.c/h   — Name pipeline: rules → title case → AI fallback
 │   ├── rules.c/h   — Pattern rules engine, flag bitmask definitions
 │   ├── llm.c/h     — llama-server sidecar: process management, HTTP, prompt
+│   ├── setup.c/h   — In-app AI dependency downloader (first-run wizard)
 │   └── slog.c/h    — Session logging (logs\ directory, TSV per Clean click)
 ├── Makefile
-├── setup.bat       — First-run AI dependency downloader
+├── setup.bat       — Alternative AI dependency downloader (script)
 ├── DEPLOY.md       — Distribution and DLL reference
 └── README.md
 
