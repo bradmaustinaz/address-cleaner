@@ -544,7 +544,7 @@ static DWORD WINAPI setup_thread(LPVOID param)
             PostMessage(hwnd, WM_SETUP_STATUS, 0,
                 (LPARAM)"Cannot reach GitHub. Check connection or firewall.");
             snprintf(s_substatus, sizeof(s_substatus),
-                "Download llama.cpp manually — see README.");
+                "Download llama.cpp manually \x97 see README.");
             PostMessage(hwnd, WM_SETUP_SUBSTATUS, 0, 0);
             Sleep(4000);
             goto done;
@@ -563,7 +563,7 @@ static DWORD WINAPI setup_thread(LPVOID param)
             PostMessage(hwnd, WM_SETUP_STATUS, 0,
                 (LPARAM)"No matching llama.cpp build found.");
             snprintf(s_substatus, sizeof(s_substatus),
-                "Pattern: %s — download manually.", pattern);
+                "Pattern: %s \x97 download manually.", pattern);
             PostMessage(hwnd, WM_SETUP_SUBSTATUS, 0, 0);
             Sleep(4000);
             goto done;
@@ -585,7 +585,7 @@ static DWORD WINAPI setup_thread(LPVOID param)
             PostMessage(hwnd, WM_SETUP_STATUS, 0,
                 (LPARAM)"Download failed. Check connection or try later.");
             snprintf(s_substatus, sizeof(s_substatus),
-                "You can download manually — see README.");
+                "You can download manually \x97 see README.");
             PostMessage(hwnd, WM_SETUP_SUBSTATUS, 0, 0);
             Sleep(4000);
             goto done;
@@ -646,7 +646,7 @@ static DWORD WINAPI setup_thread(LPVOID param)
             PostMessage(hwnd, WM_SETUP_STATUS, 0,
                 (LPARAM)"Model download failed.");
             snprintf(s_substatus, sizeof(s_substatus),
-                "Download manually from huggingface.co — see README.");
+                "Download manually from huggingface.co \x97 see README.");
             PostMessage(hwnd, WM_SETUP_SUBSTATUS, 0, 0);
             Sleep(4000);
             goto done;

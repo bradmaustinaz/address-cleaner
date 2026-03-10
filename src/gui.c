@@ -78,7 +78,7 @@ static void do_clean(void)
     /* --- Get input text ------------------------------------------------ */
     int input_len = GetWindowTextLength(g_hInput);
     if (input_len <= 0) {
-        set_status("Nothing to clean — paste names in the left pane.");
+        set_status("Nothing to clean \x97 paste names in the left pane.");
         return;
     }
 
@@ -236,7 +236,7 @@ static void copy_to_clipboard(void)
         EmptyClipboard();
         SetClipboardData(CF_TEXT, hMem);
         CloseClipboard();
-        set_status("Output copied to clipboard — paste into Excel.");
+        set_status("Output copied to clipboard \x97 paste into Excel.");
     } else {
         GlobalFree(hMem);
         set_status("Could not open clipboard.");
