@@ -388,10 +388,10 @@ int name_clean(const char *raw, NameResult *result)
             if (clen <= 3) {
                 result->flags |= NAME_FLAG_NEEDS_AI;
             } else {
-                /* Longer single words (e.g. "MAXWELL") are surnames —
-                 * append "FAMILY" only when the original was a Family
-                 * Trust; other trust types (e.g. "Maxwell Living Trust")
-                 * should not get "Family" appended. */
+                /* Longer single words (e.g. "MAXWELL") are surnames.
+                 * If the original was a Family Trust, append "FAMILY";
+                 * otherwise keep "TRUST" so the label stays useful
+                 * (e.g. "Maxwell Living Trust" → "Maxwell Trust"). */
                 int has_family = 0;
                 for (const char *fp = start; *fp; fp++) {
                     if ((fp[0] == 'F' || fp[0] == 'f') &&
@@ -403,6 +403,8 @@ int name_clean(const char *raw, NameResult *result)
                 }
                 if (has_family && clen + 7 < NAME_MAX_LEN) {
                     memcpy(result->cleaned + clen, " FAMILY", 8);
+                } else if (!has_family && clen + 6 < NAME_MAX_LEN) {
+                    memcpy(result->cleaned + clen, " TRUST", 7);
                 }
             }
         }

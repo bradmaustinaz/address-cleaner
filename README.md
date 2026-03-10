@@ -170,7 +170,7 @@ Address Cleaner/
 ## Known limitations
 
 - **Reversed Last-First names** (`SIRAKIS DEREK M` → `Derek M Sirakis`) are detected and reordered automatically; AI then checks for typos in the corrected form.
-- **Short entity abbreviations** (≤3 chars without a vowel, e.g., `HEB`, `KJ`) are sent to AI; without AI they title-case incorrectly (e.g., `Heb`). 4+ char single-word results from family trusts (e.g., `RUIZ FAMILY TRUST` → `Ruiz Family`) get "Family" appended; other trust types (e.g., `MAXWELL LIVING TRUST` → `Maxwell`) do not.
+- **Short entity abbreviations** (≤3 chars without a vowel, e.g., `HEB`, `KJ`) are sent to AI; without AI they title-case incorrectly (e.g., `Heb`). 4+ char single-word results from family trusts get "Family" appended (e.g., `RUIZ FAMILY TRUST` → `Ruiz Family`); other trust types keep "Trust" (e.g., `MAXWELL LIVING TRUST` → `Maxwell Trust`).
 - **Garbled truncated first names** (`LNDY`) are left as-is rather than guessed.
 
 ---
