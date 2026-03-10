@@ -71,6 +71,14 @@ static void setup_get_ai_dir(char *buf, size_t bufsz)
     snprintf(buf + len, bufsz - len, "ai\\");
 }
 
+static void setup_get_tmp_dir(char *buf, size_t bufsz)
+{
+    setup_get_exe_dir(buf, bufsz);
+    size_t len = strlen(buf);
+    snprintf(buf + len, bufsz - len, "tmp\\");
+    CreateDirectoryA(buf, NULL);
+}
+
 static int has_server(void)
 {
     char ai[MAX_PATH];
@@ -211,7 +219,7 @@ static void detect_gpu(char *mode, size_t modesz)
     mode[modesz - 1] = '\0';
 
     char tmpdir[MAX_PATH];
-    GetTempPathA(MAX_PATH, tmpdir);
+    setup_get_tmp_dir(tmpdir, sizeof(tmpdir));
 
     char ps_path[MAX_PATH + 32], out_path[MAX_PATH + 32];
     snprintf(ps_path, sizeof(ps_path), "%ssetup_gpu.ps1", tmpdir);
@@ -693,7 +701,7 @@ static DWORD WINAPI setup_thread(LPVOID param)
         PostMessage(hwnd, WM_SETUP_PROGRESS, 0, 0);
 
         char tmpdir[MAX_PATH];
-        GetTempPathA(MAX_PATH, tmpdir);
+        setup_get_tmp_dir(tmpdir, sizeof(tmpdir));
         char zip_path[MAX_PATH + 32];
         snprintf(zip_path, sizeof(zip_path), "%sllama_setup.zip", tmpdir);
 

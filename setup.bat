@@ -49,10 +49,13 @@ if exist "ai\llama-server.exe" (
 echo [Step 1/6] Checking network connectivity...
 echo [%date% %time%] Checking network connectivity >> "%LOGFILE%"
 
-curl.exe -s -o nul -w "%%{http_code}" --connect-timeout 5 --max-time 10 "https://api.github.com/rate_limit" > "%TEMP%\llama_netcheck.txt" 2>"%TEMP%\llama_neterr.txt"
+set SETUP_TMP=%~dp0tmp
+if not exist "%SETUP_TMP%" mkdir "%SETUP_TMP%"
+
+curl.exe -s -o nul -w "%%{http_code}" --connect-timeout 5 --max-time 10 "https://api.github.com/rate_limit" > "%SETUP_TMP%\llama_netcheck.txt" 2>"%SETUP_TMP%\llama_neterr.txt"
 set CURL_EXIT=%errorlevel%
 set HTTP_CODE=000
-if exist "%TEMP%\llama_netcheck.txt" set /p HTTP_CODE=<"%TEMP%\llama_netcheck.txt"
+if exist "%SETUP_TMP%\llama_netcheck.txt" set /p HTTP_CODE=<"%SETUP_TMP%\llama_netcheck.txt"
 
 echo [%date% %time%] Network check: curl exit=%CURL_EXIT%, HTTP=%HTTP_CODE% >> "%LOGFILE%"
 
@@ -115,8 +118,8 @@ if "!HTTP_CODE:~0,1!"=="2" (
     goto :offline_instructions
 )
 
-del "%TEMP%\llama_netcheck.txt" >nul 2>&1
-del "%TEMP%\llama_neterr.txt" >nul 2>&1
+del "%SETUP_TMP%\llama_netcheck.txt" >nul 2>&1
+del "%SETUP_TMP%\llama_neterr.txt" >nul 2>&1
 echo.
 
 :: ---------------------------------------------------------------
@@ -125,10 +128,10 @@ echo.
 echo [Step 2/6] Detecting GPU...
 echo [%date% %time%] Detecting GPU >> "%LOGFILE%"
 
-set PS_TMP=%TEMP%\llama_ps.ps1
-set MODE_TMP=%TEMP%\llama_mode.txt
-set API_JSON=%TEMP%\llama_api.json
-set URL_TMP=%TEMP%\llama_url.txt
+set PS_TMP=%SETUP_TMP%\llama_ps.ps1
+set MODE_TMP=%SETUP_TMP%\llama_mode.txt
+set API_JSON=%SETUP_TMP%\llama_api.json
+set URL_TMP=%SETUP_TMP%\llama_url.txt
 
 del "%MODE_TMP%" >nul 2>&1
 
@@ -239,8 +242,8 @@ echo.
 :: ---------------------------------------------------------------
 :: 6. Download llama.cpp zip (with timeout)
 :: ---------------------------------------------------------------
-set LLAMA_ZIP=%TEMP%\llama_setup.zip
-set LLAMA_TMP=%TEMP%\llama_setup
+set LLAMA_ZIP=%SETUP_TMP%\llama_setup.zip
+set LLAMA_TMP=%SETUP_TMP%\llama_setup
 
 echo [Step 5/6] Downloading llama.cpp [!MODE! build]...
 echo   This may take a few minutes depending on your connection.
@@ -324,6 +327,9 @@ if "!HAS_MODEL!"=="0" (
 ) else (
     echo Model already present - skipping download.
 )
+
+:: Clean up local tmp directory
+if exist "%SETUP_TMP%" rd /s /q "%SETUP_TMP%" >nul 2>&1
 
 echo [%date% %time%] Setup completed successfully >> "%LOGFILE%"
 goto :summary
