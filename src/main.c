@@ -21,6 +21,7 @@
 #include "llm.h"
 #include "setup.h"
 #include "splash.h"
+#include "update.h"
 
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev,
                    LPSTR cmdLine, int nShow)
@@ -59,6 +60,11 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev,
 
     ShowWindow(hwnd, SW_SHOWDEFAULT);
     UpdateWindow(hwnd);
+
+    /* Check for a newer GitHub release in the background.
+     * Posts WM_APP_UPDATE_AVAIL to hwnd if an update is found; the main
+     * message loop (gui_run) handles it.  Silent on any network error. */
+    update_check_async(hwnd);
 
     return gui_run();
 }

@@ -12,6 +12,7 @@
 #include "llm.h"
 #include "slog.h"
 #include "splash.h"
+#include "update.h"
 
 /* =========================================================================
  * Layout constants
@@ -435,6 +436,15 @@ LRESULT CALLBACK gui_wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         if (g_hMonoFont) DeleteObject(g_hMonoFont);
         PostQuitMessage(0);
         return 0;
+
+    case WM_APP_UPDATE_AVAIL: {
+        /* Background thread found a newer release.
+         * lParam is a heap-allocated UpdateInfo * — we own it. */
+        UpdateInfo *info = (UpdateInfo *)lp;
+        update_show_dialog(hwnd, info);
+        free(info);
+        return 0;
+    }
     }
 
     return DefWindowProc(hwnd, msg, wp, lp);
