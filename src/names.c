@@ -399,6 +399,8 @@ int name_clean(const char *raw, NameResult *result)
                 result->cleaned[slen2] = '\0';
                 for (char *up = result->cleaned; *up; up++)
                     *up = (char)toupper((unsigned char)*up);
+                result->flags |= NAME_FLAG_TRUST_KEPT;
+                result->flags &= ~NAME_FLAG_WAS_TRUST;
             }
         }
 
@@ -595,7 +597,8 @@ void name_flags_str(int flags, char *buf, size_t buflen)
     }                                                           \
 } while (0)
 
-    if (flags & NAME_FLAG_WAS_TRUST)  APPEND("trust stripped");
+    if (flags & NAME_FLAG_TRUST_KEPT)  APPEND("trust name kept");
+    else if (flags & NAME_FLAG_WAS_TRUST)  APPEND("trust stripped");
     if (flags & NAME_FLAG_WAS_ET_AL)  APPEND("et al removed");
     if (flags & NAME_FLAG_WAS_CO)     APPEND("c/o removed");
     if (flags & NAME_FLAG_WAS_AI)     APPEND("AI cleaned");

@@ -186,7 +186,7 @@ static void do_clean(void)
 
         n_cleaned++;
         if (nr.flags & NAME_FLAG_SUSPICIOUS) n_flagged++;
-        if (nr.flags & NAME_FLAG_WAS_TRUST)  n_trust++;
+        if (nr.flags & (NAME_FLAG_WAS_TRUST | NAME_FLAG_TRUST_KEPT))  n_trust++;
 
 next_line:
         *eol = saved;
