@@ -94,6 +94,8 @@ setup.bat
 
 The script does the same download, placing everything in an `ai\` subdirectory next to `nameclean.exe`. Safe to re-run — skips components already present. To remove AI, delete the `ai\` folder.
 
+> **Restricted environments:** All temporary files (downloads, scripts, extraction) are stored in a local `tmp\` directory next to the executable — not in `%TEMP%` or AppData. This works in corporate environments where roaming/local AppData is locked down. The `tmp\` directory is cleaned up automatically after setup completes.
+
 **Startup:** On first launch after AI is installed, a splash screen appears while the model loads (60–90 seconds typical). The main window opens automatically when the model is ready. If startup times out or fails, the app falls back to rules-only mode.
 
 **Status bar shows:**
@@ -158,6 +160,7 @@ Address Cleaner/
 │   ├── llama-server.exe
 │   ├── ggml.dll / llama.dll
 │   └── qwen2.5-3b-instruct-q4_k_m.gguf
+├── tmp\            — Temporary files during setup (auto-cleaned after completion)
 └── logs\           — Session logs (created automatically on first Clean)
     └── session_YYYYMMDD_HHMMSS.tsv
 ```
@@ -167,7 +170,7 @@ Address Cleaner/
 ## Known limitations
 
 - **Reversed Last-First names** (`SIRAKIS DEREK M` → `Derek M Sirakis`) are detected and reordered automatically; AI then checks for typos in the corrected form.
-- **Short entity abbreviations** (≤3 chars without a vowel, e.g., `HEB`, `KJ`) are sent to AI; without AI they title-case incorrectly (e.g., `Heb`). 4+ char single-word results (e.g., `RUIZ`) get "Family" appended as a usable mailing label.
+- **Short entity abbreviations** (≤3 chars without a vowel, e.g., `HEB`, `KJ`) are sent to AI; without AI they title-case incorrectly (e.g., `Heb`). When trust stripping reduces a name to a single 4+ char word, the full original trust name is preserved (e.g., `MAXWELL LIVING TRUST` → `Maxwell Living Trust`).
 - **Garbled truncated first names** (`LNDY`) are left as-is rather than guessed.
 
 ---

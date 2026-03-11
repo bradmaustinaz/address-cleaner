@@ -388,12 +388,19 @@ int name_clean(const char *raw, NameResult *result)
             if (clen <= 3) {
                 result->flags |= NAME_FLAG_NEEDS_AI;
             } else {
-                /* Longer single words (e.g. "MAXWELL") are surnames —
-                 * append "FAMILY" to create a usable mail label instead
-                 * of reverting to the full trust name. */
-                if (clen + 7 < NAME_MAX_LEN) { /* 7 = strlen(" FAMILY") */
-                    memcpy(result->cleaned + clen, " FAMILY", 8);
-                }
+                /* Longer single words (e.g. "MAXWELL") mean trust
+                 * stripping ate everything but the surname.  Revert to
+                 * the full original (cleaned of whitespace/typos) so
+                 * the trust name stays intact on the mailing label
+                 * (e.g. "MAXWELL LIVING TRUST" → "Maxwell Living Trust"). */
+                size_t slen2 = strlen(start);
+                if (slen2 >= NAME_MAX_LEN) slen2 = NAME_MAX_LEN - 1;
+                memcpy(result->cleaned, start, slen2);
+                result->cleaned[slen2] = '\0';
+                for (char *up = result->cleaned; *up; up++)
+                    *up = (char)toupper((unsigned char)*up);
+                result->flags |= NAME_FLAG_TRUST_KEPT;
+                result->flags &= ~NAME_FLAG_WAS_TRUST;
             }
         }
 
@@ -590,7 +597,8 @@ void name_flags_str(int flags, char *buf, size_t buflen)
     }                                                           \
 } while (0)
 
-    if (flags & NAME_FLAG_WAS_TRUST)  APPEND("trust stripped");
+    if (flags & NAME_FLAG_TRUST_KEPT)  APPEND("trust name kept");
+    else if (flags & NAME_FLAG_WAS_TRUST)  APPEND("trust stripped");
     if (flags & NAME_FLAG_WAS_ET_AL)  APPEND("et al removed");
     if (flags & NAME_FLAG_WAS_CO)     APPEND("c/o removed");
     if (flags & NAME_FLAG_WAS_AI)     APPEND("AI cleaned");

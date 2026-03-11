@@ -19,6 +19,9 @@ ai/
 # Session logs (generated at runtime)
 logs/
 
+# Local temp directory (used by setup instead of %TEMP%/AppData)
+tmp/
+
 # LLM model files (large binaries)
 *.gguf
 *.bin

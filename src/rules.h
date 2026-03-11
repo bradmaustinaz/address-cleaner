@@ -19,6 +19,7 @@
 #define NAME_FLAG_EMPTY        (1 << 4)  /* Nothing left after cleaning    */
 #define NAME_FLAG_NEEDS_AI     (1 << 5)  /* Pattern that benefits from AI  */
 #define NAME_FLAG_WAS_AI       (1 << 6)  /* AI fallback was applied        */
+#define NAME_FLAG_TRUST_KEPT   (1 << 7)  /* Single-word result → full trust kept */
 
 /*
  * rules_apply: Apply all name-cleaning rules to the uppercase string s.

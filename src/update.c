@@ -445,8 +445,8 @@ done:
 /* =========================================================================
  * Batch-script restart helper
  *
- * Writes a small .bat to %TEMP% that waits for this process to exit,
- * moves nameclean_update.exe over nameclean.exe, then relaunches it.
+ * Writes a small .bat to a local tmp\ folder that waits for this process
+ * to exit, moves nameclean_update.exe over nameclean.exe, then relaunches.
  * ====================================================================== */
 
 static void write_restart_batch(const char *update_path,
@@ -454,7 +454,10 @@ static void write_restart_batch(const char *update_path,
                                  char *bat_out, size_t bat_sz)
 {
     char temp_dir[MAX_PATH];
-    GetTempPathA(sizeof(temp_dir), temp_dir);
+    get_exe_dir(temp_dir, sizeof(temp_dir));
+    size_t len = strlen(temp_dir);
+    snprintf(temp_dir + len, sizeof(temp_dir) - len, "tmp\\");
+    CreateDirectoryA(temp_dir, NULL);
     snprintf(bat_out, bat_sz, "%snameclean_upd.bat", temp_dir);
 
     FILE *f = fopen(bat_out, "w");
