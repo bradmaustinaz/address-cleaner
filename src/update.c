@@ -186,14 +186,12 @@ static int fetch_latest_release(char *tag_out, size_t tag_sz,
                                       INTERNET_DEFAULT_HTTPS_PORT, 0);
     if (!hConn) { WinHttpCloseHandle(hSession); return 0; }
 
-    wchar_t path[256];
-    _snwprintf(path, 256,
-               L"/repos/" APP_REPO_OWNER L"/" APP_REPO_NAME L"/releases/latest",
-               (void *)0);
-    /* The macro expansions produce wide string literals; use directly: */
+    /* Use /releases?per_page=1 instead of /releases/latest so that
+     * pre-release versions (alpha, beta, rc) are also discovered.
+     * The /releases/latest endpoint only returns stable releases. */
     HINTERNET hReq = WinHttpOpenRequest(
         hConn, L"GET",
-        L"/repos/" L"" APP_REPO_OWNER L"/" L"" APP_REPO_NAME L"/releases/latest",
+        L"/repos/" L"" APP_REPO_OWNER L"/" L"" APP_REPO_NAME L"/releases?per_page=1",
         NULL, WINHTTP_NO_REFERER,
         WINHTTP_DEFAULT_ACCEPT_TYPES,
         WINHTTP_FLAG_SECURE);
