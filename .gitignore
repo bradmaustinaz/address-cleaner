@@ -27,3 +27,6 @@ tmp/
 *.bin
 *.ggml
 models/
+
+# Fine-tuning data and artifacts
+finetune/
