@@ -85,7 +85,12 @@ The core rules engine handles ~95% of names. For edge cases — reversed names, 
 
 **Quick setup — automatic (recommended):**
 
-On first launch, if the AI components are missing, the app offers to download them automatically. Click **Yes** and it handles everything: detects your GPU, downloads the right [llama.cpp](https://github.com/ggml-org/llama.cpp) build, extracts it, and downloads the [Qwen2.5-3B-Instruct Q4_K_M](https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF) model (~2 GB). Click **No** to continue in rules-only mode.
+On first launch, if the AI components are missing, the app offers to download them automatically. Click **Yes** and it handles everything: detects your GPU, downloads the right [llama.cpp](https://github.com/ggml-org/llama.cpp) build, and extracts it. A model picker dialog then lets you choose:
+
+- **Fine-tuned model** (recommended) — a [custom model](https://huggingface.co/bradmaustinaz/Realty-Mailing-Address-Q4_K_M-GGUF) trained specifically for real estate name cleaning (~2 GB)
+- **Qwen2.5-3B** — the general-purpose [Qwen2.5-3B-Instruct Q4_K_M](https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF) model (~2 GB)
+- **Browse** — select a local `.gguf` file you already have
+- **Skip** — continue in rules-only mode (no AI)
 
 **Alternative — manual script (double-click):**
 ```
@@ -94,7 +99,7 @@ setup.bat
 
 The script does the same download, placing everything in an `ai\` subdirectory next to `nameclean.exe`. Safe to re-run — skips components already present. To remove AI, delete the `ai\` folder.
 
-> **Restricted environments:** All temporary files (downloads, scripts, extraction) are stored in a local `tmp\` directory next to the executable — not in `%TEMP%` or AppData. This works in corporate environments where roaming/local AppData is locked down. The `tmp\` directory is cleaned up automatically after setup completes.
+> **Restricted environments:** All temporary files (downloads, scripts, extraction) are stored in a local `tmp\` directory next to the executable — not in `%TEMP%` or AppData. This works in corporate environments where roaming/local AppData is locked down. The `tmp\` directory is automatically deleted when setup or update completes.
 
 **Startup:** On first launch after AI is installed, a splash screen appears while the model loads (60–90 seconds typical). The main window opens automatically when the model is ready. If startup times out or fails, the app falls back to rules-only mode.
 
@@ -170,7 +175,7 @@ Address Cleaner/
 ## Known limitations
 
 - **Reversed Last-First names** (`SIRAKIS DEREK M` → `Derek M Sirakis`) are detected and reordered automatically; AI then checks for typos in the corrected form.
-- **Short entity abbreviations** (≤3 chars without a vowel, e.g., `HEB`, `KJ`) are sent to AI; without AI they title-case incorrectly (e.g., `Heb`). When trust stripping reduces a name to a single 4+ char word, the full original trust name is preserved (e.g., `MAXWELL LIVING TRUST` → `Maxwell Living Trust`).
+- **Short entity abbreviations** (≤3 chars without a vowel, e.g., `HEB`, `KJ`) are sent to AI; without AI they title-case incorrectly (e.g., `Heb`). When trust stripping reduces a name to a single 4+ char word, the full original name is preserved as a trust entity label (e.g., `MAXWELL LIVING TRUST` → `Maxwell Living Trust`).
 - **Garbled truncated first names** (`LNDY`) are left as-is rather than guessed.
 
 ---

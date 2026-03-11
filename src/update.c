@@ -467,8 +467,9 @@ static void write_restart_batch(const char *update_path,
         "ping -n 3 127.0.0.1 > nul\r\n"
         "move /y \"%s\" \"%s\"\r\n"
         "start \"\" \"%s\"\r\n"
-        "del \"%%~f0\"\r\n",
-        update_path, final_path, final_path);
+        "del \"%%~f0\"\r\n"
+        "rd /q \"%s\"\r\n",
+        update_path, final_path, final_path, temp_dir);
     fclose(f);
 }
 

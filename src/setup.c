@@ -786,6 +786,18 @@ static DWORD WINAPI setup_thread(LPVOID param)
         InterlockedExchange(&s_result, 1);
 
 done:
+    /* Clean up local tmp\ directory (may still exist even after individual
+     * file deletions — e.g. if setup succeeded or was cancelled early). */
+    {
+        char tmpdir_cleanup[MAX_PATH];
+        setup_get_exe_dir(tmpdir_cleanup, sizeof(tmpdir_cleanup));
+        size_t clen = strlen(tmpdir_cleanup);
+        snprintf(tmpdir_cleanup + clen, sizeof(tmpdir_cleanup) - clen, "tmp\\");
+        /* Try lightweight remove first (works if dir is already empty);
+         * fall back to recursive delete for any stragglers. */
+        if (!RemoveDirectoryA(tmpdir_cleanup))
+            delete_directory(tmpdir_cleanup);
+    }
     PostMessage(hwnd, WM_SETUP_DONE, (WPARAM)s_result, 0);
     return 0;
 }

@@ -33,7 +33,7 @@ automatically fixed.
 
 Both the **in-app setup wizard** (first-run prompt) and **`setup.bat`** detect your GPU automatically and download the appropriate build — CUDA for NVIDIA, Vulkan for AMD, CPU otherwise. To set up manually, choose the variant that matches your hardware.
 
-> **Restricted environments:** Setup stores all temporary files (downloaded zips, PowerShell scripts, extraction output) in a local `tmp\` directory next to the executable — never in `%TEMP%`, `%APPDATA%`, or `%LOCALAPPDATA%`. This avoids issues in corporate environments where AppData or the system temp folder is restricted. The `tmp\` directory is automatically removed after setup completes.
+> **Restricted environments:** Setup stores all temporary files (downloaded zips, PowerShell scripts, extraction output) in a local `tmp\` directory next to the executable — never in `%TEMP%`, `%APPDATA%`, or `%LOCALAPPDATA%`. This avoids issues in corporate environments where AppData or the system temp folder is restricted. The `tmp\` directory is automatically deleted when setup or update completes.
 
 > **Note:** `nameclean.exe` always launches llama-server with `--n-gpu-layers 0` (CPU
 > inference), regardless of which build is installed. Even with a CUDA or Vulkan build,
@@ -98,15 +98,18 @@ Files to place in **`ai\` next to `nameclean.exe`**:
 
 ## Model file
 
-**Qwen2.5-3B-Instruct-Q4_K_M.gguf** (~2 GB)
+The in-app setup wizard offers a model picker with two download options:
 
-Download from HuggingFace:
-```
-https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF
-```
-File: `qwen2.5-3b-instruct-q4_k_m.gguf`
+| Model | File | Size | Notes |
+|-------|------|------|-------|
+| **Fine-tuned** (recommended) | `realty-mailing-address-q4_k_m.gguf` | ~2 GB | Trained for real estate name cleaning |
+| **Qwen2.5-3B** (general-purpose) | `qwen2.5-3b-instruct-q4_k_m.gguf` | ~2 GB | General-purpose instruction model |
 
-Place it in the **`ai\` folder** next to `nameclean.exe`. The app discovers any `*.gguf` file
+Download manually from HuggingFace:
+- Fine-tuned: <https://huggingface.co/bradmaustinaz/Realty-Mailing-Address-Q4_K_M-GGUF>
+- Qwen2.5-3B: <https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF>
+
+Place the `.gguf` file in the **`ai\` folder** next to `nameclean.exe`. The app discovers any `*.gguf` file
 in that directory automatically — filename does not matter.
 
 Both `setup.bat` and the in-app setup wizard handle this download automatically. All downloads use a local `tmp\` directory (not the system temp folder), so no AppData access is required.
