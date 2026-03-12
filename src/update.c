@@ -21,10 +21,10 @@
 
 #define NOTIF_CLASS  "NameCleanUpdater"
 #define DL_CLASS     "NameCleanDL"
-#define NOTIF_W      430
-#define NOTIF_H      175
-#define DL_W         360
-#define DL_H         120
+#define NOTIF_W      540
+#define NOTIF_H      230
+#define DL_W         440
+#define DL_H         160
 
 #define IDC_UPD_DL    501
 #define IDC_UPD_WEB   502
@@ -32,6 +32,7 @@
 #define IDC_DL_CANCEL 504
 #define IDC_DL_PROG   505
 #define IDC_DL_LABEL  506
+#define IDC_DL_SUB    507   /* sub-label showing filename / percent text    */
 
 /* =========================================================================
  * Shared state between notification dialog and download thread
@@ -52,6 +53,69 @@ static void get_exe_dir(char *buf, size_t bufsz)
     char *sep = strrchr(buf, '\\');
     if (sep) sep[1] = '\0';
     else     buf[0] = '\0';
+}
+
+/* =========================================================================
+ * Skip-version persistence
+ *
+ * When the user clicks "Skip", we persist the tag to a small text file so
+ * we don't nag them on every subsequent launch for the same version.
+ * File: <exe_dir>\update_skipped_tag.txt
+ * ====================================================================== */
+
+static void get_skipped_tag_path(char *buf, size_t bufsz)
+{
+    get_exe_dir(buf, bufsz);
+    size_t len = strlen(buf);
+    snprintf(buf + len, bufsz - len, "update_skipped_tag.txt");
+}
+
+static void read_skipped_tag(char *buf, size_t bufsz)
+{
+    buf[0] = '\0';
+    char path[MAX_PATH + 32];
+    get_skipped_tag_path(path, sizeof(path));
+    FILE *f = fopen(path, "r");
+    if (!f) return;
+    if (fgets(buf, (int)bufsz, f)) {
+        size_t len = strlen(buf);
+        while (len > 0 && (buf[len-1] == '\r' || buf[len-1] == '\n'))
+            buf[--len] = '\0';
+    }
+    fclose(f);
+}
+
+static void write_skipped_tag(const char *tag)
+{
+    char path[MAX_PATH + 32];
+    get_skipped_tag_path(path, sizeof(path));
+    FILE *f = fopen(path, "w");
+    if (!f) return;
+    fputs(tag, f);
+    fclose(f);
+}
+
+static void clear_skipped_tag(void)
+{
+    char path[MAX_PATH + 32];
+    get_skipped_tag_path(path, sizeof(path));
+    DeleteFileA(path);
+}
+
+/* =========================================================================
+ * Apply DEFAULT_GUI_FONT to all immediate child controls of hwnd.
+ * This gives the dialogs the proper Windows dialog font (Tahoma / Segoe UI)
+ * instead of the ugly legacy bitmap SYSTEM font.
+ * ====================================================================== */
+
+static void apply_gui_font(HWND hwnd)
+{
+    HFONT hf = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+    HWND child = GetWindow(hwnd, GW_CHILD);
+    while (child) {
+        SendMessage(child, WM_SETFONT, (WPARAM)hf, FALSE);
+        child = GetWindow(child, GW_HWNDNEXT);
+    }
 }
 
 /* =========================================================================
@@ -258,6 +322,12 @@ static DWORD WINAPI update_thread(LPVOID param)
     if (!is_newer_version(APP_VERSION, tag))
         return 0;
 
+    /* Don't re-prompt if the user already dismissed this exact version. */
+    char skipped[64] = {0};
+    read_skipped_tag(skipped, sizeof(skipped));
+    if (skipped[0] && strcmp(skipped, tag) == 0)
+        return 0;
+
     UpdateInfo *info = (UpdateInfo *)malloc(sizeof(UpdateInfo));
     if (!info) return 0;
     snprintf(info->tag,       sizeof(info->tag),       "%s", tag);
@@ -281,21 +351,38 @@ static LRESULT CALLBACK dl_wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     switch (msg) {
     case WM_CREATE: {
+        int pad  = 18;
+        int ctlw = DL_W - pad * 2;
+
+        /* "Downloading update…" heading */
         CreateWindowExA(0, "STATIC",
             "Downloading update\x85",      /* \x85 = CP1252 ellipsis */
             WS_CHILD | WS_VISIBLE | SS_LEFT,
-            14, 14, DL_W - 32, 20,
+            pad, pad, ctlw, 20,
             hwnd, (HMENU)IDC_DL_LABEL, NULL, NULL);
+
+        /* Sub-label: shows filename / percent while downloading */
+        CreateWindowExA(0, "STATIC", "",
+            WS_CHILD | WS_VISIBLE | SS_LEFT,
+            pad, pad + 24, ctlw, 18,
+            hwnd, (HMENU)IDC_DL_SUB, NULL, NULL);
+
+        /* Progress bar */
         CreateWindowExA(0, PROGRESS_CLASSA, NULL,
             WS_CHILD | WS_VISIBLE | PBS_SMOOTH,
-            14, 42, DL_W - 32, 18,
+            pad, pad + 52, ctlw, 20,
             hwnd, (HMENU)IDC_DL_PROG, NULL, NULL);
         HWND hprog = GetDlgItem(hwnd, IDC_DL_PROG);
         SendMessageA(hprog, PBM_SETRANGE32, 0, 100);
+
+        /* Cancel button — centered */
+        int bw = 90, bh = 30;
         CreateWindowExA(0, "BUTTON", "Cancel",
             WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            DL_W / 2 - 40, 72, 80, 28,
+            (DL_W - bw) / 2, pad + 86, bw, bh,
             hwnd, (HMENU)IDC_DL_CANCEL, NULL, NULL);
+
+        apply_gui_font(hwnd);
         return 0;
     }
     case WM_COMMAND:
@@ -305,9 +392,13 @@ static LRESULT CALLBACK dl_wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_CLOSE:
         InterlockedExchange(&s_dl_cancel, 1);
         return 0;
-    case WM_UPD_PROGRESS:
+    case WM_UPD_PROGRESS: {
         SendDlgItemMessageA(hwnd, IDC_DL_PROG, PBM_SETPOS, wp, 0);
+        char pct_text[32];
+        snprintf(pct_text, sizeof(pct_text), "%d%%", (int)wp);
+        SetDlgItemTextA(hwnd, IDC_DL_SUB, pct_text);
         return 0;
+    }
     case WM_UPD_DONE:
         DestroyWindow(hwnd);
         PostQuitMessage((int)wp); /* 1 = success, 0 = fail/cancel */
@@ -491,6 +582,21 @@ static void do_download_and_install(HWND parent, const UpdateInfo *info)
     char final_dest[MAX_PATH + 32];
     snprintf(final_dest, sizeof(final_dest), "%s" APP_EXE_NAME, exe_dir);
 
+    /* If a previously-downloaded file already exists, offer to install it
+     * without re-downloading.  This avoids the repeated-download loop when
+     * the batch-script replace step failed on a prior attempt. */
+    DWORD existing = GetFileAttributesA(update_dest);
+    if (existing != INVALID_FILE_ATTRIBUTES) {
+        int choice = MessageBoxA(parent,
+            "An update file was already downloaded.\r\n\r\n"
+            "Click Yes to install the existing file, or No to download it again.",
+            "Update Available", MB_YESNOCANCEL | MB_ICONQUESTION);
+        if (choice == IDCANCEL) return;
+        if (choice == IDYES)    goto do_install;
+        /* No → delete stale file and re-download */
+        DeleteFileA(update_dest);
+    }
+
     /* Set shared state for download thread */
     snprintf(s_dl_url,  sizeof(s_dl_url),  "%s", info->asset_url);
     snprintf(s_dl_dest, sizeof(s_dl_dest), "%s", update_dest);
@@ -552,16 +658,22 @@ static void do_download_and_install(HWND parent, const UpdateInfo *info)
         return;
     }
 
+do_install:
     /* Rename update file to final name via batch script */
-    char bat_path[MAX_PATH + 32] = {0};
-    write_restart_batch(update_dest, final_dest, bat_path, sizeof(bat_path));
+    {
+        char bat_path[MAX_PATH + 32] = {0};
+        write_restart_batch(update_dest, final_dest, bat_path, sizeof(bat_path));
 
-    if (bat_path[0]) {
-        ShellExecuteA(NULL, "open", bat_path, NULL, NULL, SW_HIDE);
+        if (bat_path[0]) {
+            ShellExecuteA(NULL, "open", bat_path, NULL, NULL, SW_HIDE);
+        }
+
+        /* Clear skip state so future launches don't suppress a newer release */
+        clear_skipped_tag();
+
+        /* Close the app — batch will relaunch the new binary */
+        PostMessageA(parent, WM_CLOSE, 0, 0);
     }
-
-    /* Close the app — batch will relaunch the new binary */
-    PostMessageA(parent, WM_CLOSE, 0, 0);
 }
 
 /* =========================================================================
@@ -575,23 +687,33 @@ static LRESULT CALLBACK notif_wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
 {
     switch (msg) {
     case WM_CREATE: {
-        /* Compose the message text using the info passed via CreateWindowEx */
-        char caption[256];
+        int pad  = 18;
+        int ctlw = NOTIF_W - pad * 2;
+
+        /* Compose the message text */
+        char caption[320];
         snprintf(caption, sizeof(caption),
-            "Name Cleaner %s is available  \x96  you have v" APP_VERSION
-            "\r\n\r\n"
+            "Name Cleaner %s is available \x96 you have v" APP_VERSION ".\r\n\r\n"
             "Download and install now, or open the release page for details.",
             s_notif_info ? s_notif_info->tag : "(new version)");
 
         CreateWindowExA(0, "STATIC", caption,
             WS_CHILD | WS_VISIBLE | SS_LEFT,
-            14, 14, NOTIF_W - 32, 72,
+            pad, pad, ctlw, 90,
             hwnd, NULL, NULL, NULL);
 
-        /* Buttons — evenly spaced at bottom */
-        int bw = 126, bh = 30, by = NOTIF_H - 50;
-        int gap = (NOTIF_W - 3 * bw - 28) / 2;
-        int bx = 14;
+        /* Separator line */
+        CreateWindowExA(0, "STATIC", "",
+            WS_CHILD | WS_VISIBLE | SS_ETCHEDHORZ,
+            pad, NOTIF_H - 72, ctlw, 2,
+            hwnd, NULL, NULL, NULL);
+
+        /* Buttons — evenly spaced in the bottom strip */
+        int bw = 140, bh = 32, by = NOTIF_H - 62;
+        int total_btn = 3 * bw;
+        int gap = (NOTIF_W - pad * 2 - total_btn) / 2;
+        int bx = pad;
+
         CreateWindowExA(0, "BUTTON", "Download && Install",
             WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
             bx, by, bw, bh,
@@ -602,10 +724,12 @@ static LRESULT CALLBACK notif_wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
             bx, by, bw, bh,
             hwnd, (HMENU)IDC_UPD_WEB, NULL, NULL);
         bx += bw + gap;
-        CreateWindowExA(0, "BUTTON", "Skip",
+        CreateWindowExA(0, "BUTTON", "Skip This Version",
             WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
             bx, by, bw, bh,
             hwnd, (HMENU)IDC_UPD_SKIP, NULL, NULL);
+
+        apply_gui_font(hwnd);
         return 0;
     }
     case WM_COMMAND:
@@ -667,6 +791,8 @@ void update_show_dialog(HWND parent, UpdateInfo *info)
     s_notif_info = NULL;
 
     if (choice == IDC_UPD_SKIP) {
+        /* Persist skip so we don't nag again for this exact version */
+        write_skipped_tag(info->tag);
         return;
     } else if (choice == IDC_UPD_WEB) {
         ShellExecuteA(NULL, "open",
