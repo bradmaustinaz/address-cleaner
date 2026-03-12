@@ -427,7 +427,8 @@ static DWORD WINAPI dl_thread(LPVOID param)
         }
 
         CloseHandle(hFile);
-        if (!ok) DeleteFileA(s_dl_dest); /* remove partial download */
+        /* Keep partial downloads on failure so the user doesn't lose
+         * what was already fetched — they can retry or finish manually. */
 
         WinHttpCloseHandle(hReq);
         WinHttpCloseHandle(hConn);

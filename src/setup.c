@@ -453,10 +453,8 @@ static int download_to_file(const char *url_a, const char *filepath,
     WinHttpCloseHandle(hConnect);
     WinHttpCloseHandle(hSession);
 
-    if (!ok || (content_len > 0 && total < content_len)) {
-        DeleteFileA(filepath);
+    if (!ok || (content_len > 0 && total < content_len))
         return 0;
-    }
     return 1;
 
 fail_request:
@@ -714,7 +712,7 @@ static DWORD WINAPI setup_thread(LPVOID param)
             Sleep(4000);
             goto done;
         }
-        if (s_cancel) { DeleteFileA(zip_path); goto done; }
+        if (s_cancel) goto done;
 
         /* --- Extract zip --- */
         PostMessage(hwnd, WM_SETUP_STATUS, 0,
@@ -727,7 +725,6 @@ static DWORD WINAPI setup_thread(LPVOID param)
         snprintf(extract_dir, sizeof(extract_dir), "%sllama_setup", tmpdir);
 
         if (!extract_zip(zip_path, extract_dir)) {
-            DeleteFileA(zip_path);
             PostMessage(hwnd, WM_SETUP_STATUS, 0,
                 (LPARAM)"Extraction failed (PowerShell may be blocked).");
             snprintf(s_substatus, sizeof(s_substatus),
@@ -737,7 +734,7 @@ static DWORD WINAPI setup_thread(LPVOID param)
             goto done;
         }
         DeleteFileA(zip_path);
-        if (s_cancel) { delete_directory(extract_dir); goto done; }
+        if (s_cancel) goto done;
 
         /* --- Copy files into ai\ --- */
         PostMessage(hwnd, WM_SETUP_STATUS, 0,
@@ -747,9 +744,8 @@ static DWORD WINAPI setup_thread(LPVOID param)
             PostMessage(hwnd, WM_SETUP_STATUS, 0,
                 (LPARAM)"Could not copy files into ai\\ folder.");
             snprintf(s_substatus, sizeof(s_substatus),
-                "Check folder permissions or copy manually.");
+                "Check folder permissions or copy manually from tmp\\.");
             PostMessage(hwnd, WM_SETUP_SUBSTATUS, 0, 0);
-            delete_directory(extract_dir);
             Sleep(4000);
             goto done;
         }
@@ -786,15 +782,13 @@ static DWORD WINAPI setup_thread(LPVOID param)
         InterlockedExchange(&s_result, 1);
 
 done:
-    /* Clean up local tmp\ directory (may still exist even after individual
-     * file deletions — e.g. if setup succeeded or was cancelled early). */
-    {
+    /* Only clean up tmp\ on success — on failure or cancellation, preserve
+     * downloaded files so the user doesn't have to re-download them. */
+    if (s_result) {
         char tmpdir_cleanup[MAX_PATH];
         setup_get_exe_dir(tmpdir_cleanup, sizeof(tmpdir_cleanup));
         size_t clen = strlen(tmpdir_cleanup);
         snprintf(tmpdir_cleanup + clen, sizeof(tmpdir_cleanup) - clen, "tmp\\");
-        /* Try lightweight remove first (works if dir is already empty);
-         * fall back to recursive delete for any stragglers. */
         if (!RemoveDirectoryA(tmpdir_cleanup))
             delete_directory(tmpdir_cleanup);
     }
