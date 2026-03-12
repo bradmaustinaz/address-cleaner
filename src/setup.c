@@ -58,7 +58,8 @@ static char          s_chosen_model_filename[256] = {0};
 
 static void setup_get_exe_dir(char *buf, size_t bufsz)
 {
-    GetModuleFileNameA(NULL, buf, (DWORD)bufsz);
+    DWORD n = GetModuleFileNameA(NULL, buf, (DWORD)bufsz);
+    if (n == 0 || n >= (DWORD)bufsz) { buf[0] = '\0'; return; }
     char *sep = strrchr(buf, '\\');
     if (sep) sep[1] = '\0';
     else     buf[0] = '\0';
@@ -215,8 +216,7 @@ static int pick_model_source(char *out_path, size_t out_path_sz)
 
 static void detect_gpu(char *mode, size_t modesz)
 {
-    strncpy(mode, "cpu", modesz);
-    mode[modesz - 1] = '\0';
+    snprintf(mode, modesz, "cpu");
 
     char tmpdir[MAX_PATH];
     setup_get_tmp_dir(tmpdir, sizeof(tmpdir));
@@ -248,7 +248,8 @@ static void detect_gpu(char *mode, size_t modesz)
 
     if (CreateProcessA(NULL, cmd, NULL, NULL, FALSE,
                        CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
-        WaitForSingleObject(pi.hProcess, 10000);
+        if (WaitForSingleObject(pi.hProcess, 10000) == WAIT_TIMEOUT)
+            TerminateProcess(pi.hProcess, 1);
         CloseHandle(pi.hProcess);
         CloseHandle(pi.hThread);
     }
@@ -294,9 +295,9 @@ static DWORD download_to_memory(const wchar_t *url, char **out_buf)
 
     if (!WinHttpCrackUrl(url, 0, 0, &uc)) return 0;
 
-    wchar_t full_path[2560];
-    wcscpy(full_path, path);
-    wcscat(full_path, extra);
+    wchar_t full_path[2561];
+    _snwprintf(full_path, 2561, L"%s%s", path, extra);
+    full_path[2560] = L'\0';
 
     HINTERNET hSession = WinHttpOpen(L"AddressCleaner-Setup/1.0",
                                       WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
@@ -305,6 +306,11 @@ static DWORD download_to_memory(const wchar_t *url, char **out_buf)
     if (!hSession) return 0;
 
     WinHttpSetTimeouts(hSession, 5000, 5000, 15000, 15000);
+
+    /* Follow all redirects (CDN/mirror redirects common for GitHub/HF) */
+    DWORD redir_policy = WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS;
+    WinHttpSetOption(hSession, WINHTTP_OPTION_REDIRECT_POLICY,
+                     &redir_policy, sizeof(redir_policy));
 
     HINTERNET hConnect = WinHttpConnect(hSession, host, uc.nPort, 0);
     if (!hConnect) { WinHttpCloseHandle(hSession); return 0; }
@@ -324,6 +330,16 @@ static DWORD download_to_memory(const wchar_t *url, char **out_buf)
         !WinHttpReceiveResponse(hRequest, NULL))
         goto fail_request;
 
+    /* Check HTTP status — reject non-200 responses */
+    {
+        DWORD http_status = 0, hs_sz = sizeof(http_status);
+        WinHttpQueryHeaders(hRequest,
+            WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+            WINHTTP_HEADER_NAME_BY_INDEX, &http_status, &hs_sz,
+            WINHTTP_NO_HEADER_INDEX);
+        if (http_status != 200) goto fail_request;
+    }
+
     /* Read into growing buffer */
     size_t cap = 65536, total = 0;
     char *buf = (char *)malloc(cap);
@@ -340,7 +356,7 @@ static DWORD download_to_memory(const wchar_t *url, char **out_buf)
             buf = nb;
         }
     }
-    if (buf && total > 0) buf[total] = '\0';
+    if (buf) buf[total] = '\0';
 
     WinHttpCloseHandle(hRequest);
     WinHttpCloseHandle(hConnect);
@@ -364,7 +380,7 @@ static int download_to_file(const char *url_a, const char *filepath,
                             HWND hwnd)
 {
     wchar_t url_w[2048];
-    MultiByteToWideChar(CP_ACP, 0, url_a, -1, url_w, 2048);
+    if (!MultiByteToWideChar(CP_ACP, 0, url_a, -1, url_w, 2048)) return 0;
 
     URL_COMPONENTSW uc;
     ZeroMemory(&uc, sizeof(uc));
@@ -376,9 +392,9 @@ static int download_to_file(const char *url_a, const char *filepath,
 
     if (!WinHttpCrackUrl(url_w, 0, 0, &uc)) return 0;
 
-    wchar_t full_path[2560];
-    wcscpy(full_path, path);
-    wcscat(full_path, extra);
+    wchar_t full_path[2561];
+    _snwprintf(full_path, 2561, L"%s%s", path, extra);
+    full_path[2560] = L'\0';
 
     HINTERNET hSession = WinHttpOpen(L"AddressCleaner-Setup/1.0",
                                       WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
@@ -388,6 +404,11 @@ static int download_to_file(const char *url_a, const char *filepath,
 
     /* Generous timeouts for large file downloads */
     WinHttpSetTimeouts(hSession, 10000, 10000, 300000, 300000);
+
+    /* Follow all redirects (CDN/mirror redirects common for HuggingFace) */
+    DWORD redir_policy = WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS;
+    WinHttpSetOption(hSession, WINHTTP_OPTION_REDIRECT_POLICY,
+                     &redir_policy, sizeof(redir_policy));
 
     HINTERNET hConnect = WinHttpConnect(hSession, host, uc.nPort, 0);
     if (!hConnect) { WinHttpCloseHandle(hSession); return 0; }
@@ -406,6 +427,16 @@ static int download_to_file(const char *url_a, const char *filepath,
                              NULL, 0, 0, 0) ||
         !WinHttpReceiveResponse(hRequest, NULL))
         goto fail_request;
+
+    /* Check HTTP status — reject non-200 responses */
+    {
+        DWORD http_status = 0, hs_sz = sizeof(http_status);
+        WinHttpQueryHeaders(hRequest,
+            WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+            WINHTTP_HEADER_NAME_BY_INDEX, &http_status, &hs_sz,
+            WINHTTP_NO_HEADER_INDEX);
+        if (http_status != 200) goto fail_request;
+    }
 
     /* Content-Length for progress (may be 0 if server doesn't provide it) */
     DWORD content_len = 0, sz = sizeof(content_len);
@@ -440,11 +471,11 @@ static int download_to_file(const char *url_a, const char *filepath,
                      "%u MB / %u MB",
                      (unsigned)(total >> 20),
                      (unsigned)(content_len >> 20));
-            PostMessage(hwnd, WM_SETUP_SUBSTATUS, 0, 0);
+            SendMessage(hwnd, WM_SETUP_SUBSTATUS, 0, 0);
         } else if (hwnd) {
             snprintf(s_substatus, sizeof(s_substatus),
                      "%u MB downloaded", (unsigned)(total >> 20));
-            PostMessage(hwnd, WM_SETUP_SUBSTATUS, 0, 0);
+            SendMessage(hwnd, WM_SETUP_SUBSTATUS, 0, 0);
         }
     }
 
@@ -453,8 +484,10 @@ static int download_to_file(const char *url_a, const char *filepath,
     WinHttpCloseHandle(hConnect);
     WinHttpCloseHandle(hSession);
 
-    if (!ok || (content_len > 0 && total < content_len))
+    if (!ok || (content_len > 0 && total < content_len)) {
+        DeleteFileA(filepath);  /* remove partial/corrupt download */
         return 0;
+    }
     return 1;
 
 fail_request:
@@ -530,7 +563,8 @@ static int extract_zip(const char *zip_path, const char *dest_dir)
                         CREATE_NO_WINDOW, NULL, NULL, &si, &pi))
         return 0;
 
-    WaitForSingleObject(pi.hProcess, 120000);
+    if (WaitForSingleObject(pi.hProcess, 120000) == WAIT_TIMEOUT)
+        TerminateProcess(pi.hProcess, 1);
     DWORD exitcode = 1;
     GetExitCodeProcess(pi.hProcess, &exitcode);
     CloseHandle(pi.hProcess);
@@ -552,8 +586,7 @@ static int copy_server_files(const char *src_dir, const char *ai_dir)
 {
     /* The zip may contain files directly or in a single subdirectory */
     char actual_src[MAX_PATH * 2];
-    strncpy(actual_src, src_dir, sizeof(actual_src));
-    actual_src[sizeof(actual_src) - 1] = '\0';
+    snprintf(actual_src, sizeof(actual_src), "%s", src_dir);
 
     char server_test[MAX_PATH + 32];
     snprintf(server_test, sizeof(server_test), "%s\\llama-server.exe", src_dir);
@@ -612,7 +645,7 @@ static void delete_directory(const char *dir)
     /* SHFileOperation needs double-null terminated path */
     char buf[MAX_PATH + 2];
     ZeroMemory(buf, sizeof(buf));
-    strncpy(buf, dir, MAX_PATH);
+    snprintf(buf, MAX_PATH + 1, "%s", dir);
 
     SHFILEOPSTRUCTA fo;
     ZeroMemory(&fo, sizeof(fo));
@@ -640,7 +673,7 @@ static DWORD WINAPI setup_thread(LPVOID param)
         /* --- GPU detection --- */
         PostMessage(hwnd, WM_SETUP_STATUS, 0, (LPARAM)"Detecting GPU...");
         s_substatus[0] = '\0';
-        PostMessage(hwnd, WM_SETUP_SUBSTATUS, 0, 0);
+        SendMessage(hwnd, WM_SETUP_SUBSTATUS, 0, 0);
 
         char mode[16];
         detect_gpu(mode, sizeof(mode));
@@ -652,7 +685,7 @@ static DWORD WINAPI setup_thread(LPVOID param)
             snprintf(s_substatus, sizeof(s_substatus), "AMD GPU detected");
         else
             snprintf(s_substatus, sizeof(s_substatus), "Using CPU build");
-        PostMessage(hwnd, WM_SETUP_SUBSTATUS, 0, 0);
+        SendMessage(hwnd, WM_SETUP_SUBSTATUS, 0, 0);
         Sleep(800); /* Brief pause so user can read GPU result */
 
         /* --- Fetch GitHub release JSON --- */
@@ -667,7 +700,7 @@ static DWORD WINAPI setup_thread(LPVOID param)
                 (LPARAM)"Cannot reach GitHub. Check connection or firewall.");
             snprintf(s_substatus, sizeof(s_substatus),
                 "Download llama.cpp manually \x97 see README.");
-            PostMessage(hwnd, WM_SETUP_SUBSTATUS, 0, 0);
+            SendMessage(hwnd, WM_SETUP_SUBSTATUS, 0, 0);
             Sleep(4000);
             goto done;
         }
@@ -686,7 +719,7 @@ static DWORD WINAPI setup_thread(LPVOID param)
                 (LPARAM)"No matching llama.cpp build found.");
             snprintf(s_substatus, sizeof(s_substatus),
                 "Pattern: %s \x97 download manually.", pattern);
-            PostMessage(hwnd, WM_SETUP_SUBSTATUS, 0, 0);
+            SendMessage(hwnd, WM_SETUP_SUBSTATUS, 0, 0);
             Sleep(4000);
             goto done;
         }
@@ -708,7 +741,7 @@ static DWORD WINAPI setup_thread(LPVOID param)
                 (LPARAM)"Download failed. Check connection or try later.");
             snprintf(s_substatus, sizeof(s_substatus),
                 "You can download manually \x97 see README.");
-            PostMessage(hwnd, WM_SETUP_SUBSTATUS, 0, 0);
+            SendMessage(hwnd, WM_SETUP_SUBSTATUS, 0, 0);
             Sleep(4000);
             goto done;
         }
@@ -718,7 +751,7 @@ static DWORD WINAPI setup_thread(LPVOID param)
         PostMessage(hwnd, WM_SETUP_STATUS, 0,
                     (LPARAM)"Extracting llama.cpp...");
         s_substatus[0] = '\0';
-        PostMessage(hwnd, WM_SETUP_SUBSTATUS, 0, 0);
+        SendMessage(hwnd, WM_SETUP_SUBSTATUS, 0, 0);
         PostMessage(hwnd, WM_SETUP_PROGRESS, 0, 0);
 
         char extract_dir[MAX_PATH + 32];
@@ -729,7 +762,7 @@ static DWORD WINAPI setup_thread(LPVOID param)
                 (LPARAM)"Extraction failed (PowerShell may be blocked).");
             snprintf(s_substatus, sizeof(s_substatus),
                 "Extract the zip manually into the ai\\ folder.");
-            PostMessage(hwnd, WM_SETUP_SUBSTATUS, 0, 0);
+            SendMessage(hwnd, WM_SETUP_SUBSTATUS, 0, 0);
             Sleep(4000);
             goto done;
         }
@@ -745,7 +778,7 @@ static DWORD WINAPI setup_thread(LPVOID param)
                 (LPARAM)"Could not copy files into ai\\ folder.");
             snprintf(s_substatus, sizeof(s_substatus),
                 "Check folder permissions or copy manually from tmp\\.");
-            PostMessage(hwnd, WM_SETUP_SUBSTATUS, 0, 0);
+            SendMessage(hwnd, WM_SETUP_SUBSTATUS, 0, 0);
             Sleep(4000);
             goto done;
         }
@@ -772,7 +805,7 @@ static DWORD WINAPI setup_thread(LPVOID param)
                 (LPARAM)"Model download failed.");
             snprintf(s_substatus, sizeof(s_substatus),
                 "Download manually from huggingface.co \x97 see README.");
-            PostMessage(hwnd, WM_SETUP_SUBSTATUS, 0, 0);
+            SendMessage(hwnd, WM_SETUP_SUBSTATUS, 0, 0);
             Sleep(4000);
             goto done;
         }
@@ -841,7 +874,8 @@ static LRESULT CALLBACK setup_wnd_proc(HWND hwnd, UINT msg,
         SendMessageA(s_hBtn,   WM_SETFONT, (WPARAM)hGui, FALSE);
 
         /* Kick off the background download thread */
-        CreateThread(NULL, 0, setup_thread, (LPVOID)hwnd, 0, NULL);
+        HANDLE ht = CreateThread(NULL, 0, setup_thread, (LPVOID)hwnd, 0, NULL);
+        if (ht) CloseHandle(ht);
         return 0;
     }
 
@@ -942,21 +976,27 @@ int setup_run(HINSTANCE hInst)
             char dest[MAX_PATH + 260];
             snprintf(dest, sizeof(dest), "%s%s",
                      ai_dir, fname ? fname + 1 : browse_path);
-            CopyFileA(browse_path, dest, FALSE);
-            if (!need_server) return 1;  /* model handled, nothing else to do */
+            if (!CopyFileA(browse_path, dest, FALSE)) {
+                MessageBoxA(NULL, "Failed to copy model file.",
+                            "Setup Error", MB_ICONERROR);
+                if (!need_server) return 0;
+                InterlockedExchange(&s_skip_model, 1);
+            } else if (!need_server) {
+                return 1;  /* model handled, nothing else to do */
+            }
             InterlockedExchange(&s_skip_model, 1);
 
         } else if (src == 1) {   /* Fine-tuned */
-            strncpy(s_chosen_model_url,      FINETUNE_MODEL_URL,
-                    sizeof(s_chosen_model_url) - 1);
-            strncpy(s_chosen_model_filename, FINETUNE_MODEL_FILENAME,
-                    sizeof(s_chosen_model_filename) - 1);
+            snprintf(s_chosen_model_url, sizeof(s_chosen_model_url),
+                     "%s", FINETUNE_MODEL_URL);
+            snprintf(s_chosen_model_filename, sizeof(s_chosen_model_filename),
+                     "%s", FINETUNE_MODEL_FILENAME);
 
         } else {                 /* Qwen2.5 (src == 2) */
-            strncpy(s_chosen_model_url,      MODEL_URL,
-                    sizeof(s_chosen_model_url) - 1);
-            strncpy(s_chosen_model_filename, MODEL_FILENAME,
-                    sizeof(s_chosen_model_filename) - 1);
+            snprintf(s_chosen_model_url, sizeof(s_chosen_model_url),
+                     "%s", MODEL_URL);
+            snprintf(s_chosen_model_filename, sizeof(s_chosen_model_filename),
+                     "%s", MODEL_FILENAME);
         }
     }
 

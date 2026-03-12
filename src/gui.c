@@ -104,7 +104,7 @@ static void do_clean(void)
         GetModuleFileNameA(NULL, log_dir, MAX_PATH);
         char *sep = strrchr(log_dir, '\\');
         if (sep) *(sep + 1) = '\0'; else log_dir[0] = '\0';
-        char log_path[MAX_PATH];
+        char log_path[MAX_PATH + 32];
         snprintf(log_path, sizeof(log_path), "%snameclean_debug.log", log_dir);
         rules_debug_open(log_path);
     }
@@ -136,6 +136,8 @@ static void do_clean(void)
     int n_trust   = 0;
     char prev_raw[NAME_MAX_LEN] = {0};   /* previous raw input for dedup */
 
+    TsvRow row;  /* ~65 KB — hoist above the loop to avoid per-iteration stack growth */
+
     char *line = input;
     while (line && *line) {
         /* Find end of line */
@@ -147,15 +149,13 @@ static void do_clean(void)
         if (*line == '\0') goto next_line;
 
         /* Parse TSV row and clean field 0 */
-        TsvRow row;
         tsv_parse_row(line, &row);
 
         /* Skip exact duplicate consecutive rows (same raw input) */
         const char *raw_field = tsv_field(&row, 0);
         if (prev_raw[0] && strcmp(raw_field, prev_raw) == 0)
             goto next_line;
-        strncpy(prev_raw, raw_field, NAME_MAX_LEN - 1);
-        prev_raw[NAME_MAX_LEN - 1] = '\0';
+        snprintf(prev_raw, NAME_MAX_LEN, "%s", raw_field);
 
         NameResult nr;
         name_clean(raw_field, &nr);
@@ -167,7 +167,15 @@ static void do_clean(void)
         if (needed > out_cap) {
             out_cap = needed * 2;
             char *tmp = realloc(out_buf, out_cap);
-            if (!tmp) { free(out_buf); free(input); set_status("Out of memory."); return; }
+            if (!tmp) {
+                free(out_buf); free(input);
+                slog_close(n_cleaned, n_flagged, n_trust);
+#ifdef DEBUG
+                rules_debug_close();
+#endif
+                set_status("Out of memory.");
+                return;
+            }
             out_buf = tmp;
         }
 
@@ -234,6 +242,7 @@ static void copy_to_clipboard(void)
     if (!hMem) return;
 
     char *p = GlobalLock(hMem);
+    if (!p) { GlobalFree(hMem); return; }
     GetWindowText(g_hOutput, p, len + 1);
     GlobalUnlock(hMem);
 
@@ -422,6 +431,7 @@ LRESULT CALLBACK gui_wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             HDC hdcMem = CreateCompatibleDC(hdc);
             HBITMAP hOld = (HBITMAP)SelectObject(hdcMem, g_hLogoGui);
             SetStretchBltMode(hdc, HALFTONE);
+            SetBrushOrgEx(hdc, 0, 0, NULL);
             StretchBlt(hdc, lx, ly, dw, dh,
                        hdcMem, 0, 0, g_logo_src_w, g_logo_src_h, SRCCOPY);
             SelectObject(hdcMem, hOld);
@@ -438,6 +448,10 @@ LRESULT CALLBACK gui_wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_DESTROY:
         llm_shutdown();
         if (g_hMonoFont) DeleteObject(g_hMonoFont);
+        /* Logo bitmaps are owned by splash.c — let splash_cleanup free them.
+         * gui.c only borrowed a reference via splash_get_logo_for_window(). */
+        g_hLogoGui = NULL;
+        splash_cleanup();
         PostQuitMessage(0);
         return 0;
 
@@ -494,7 +508,9 @@ HWND gui_create_window(HINSTANCE hInst)
 int gui_run(void)
 {
     MSG msg;
-    while (GetMessage(&msg, NULL, 0, 0) > 0) {
+    BOOL ret;
+    while ((ret = GetMessage(&msg, NULL, 0, 0)) != 0) {
+        if (ret == -1) return 1; /* error — bail out */
         TranslateMessage(&msg);
         DispatchMessage(&msg);
     }

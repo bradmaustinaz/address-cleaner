@@ -35,4 +35,7 @@ HBITMAP splash_get_logo_for_window(int *out_w, int *out_h);
 /* Show the AI startup splash and block until startup resolves. */
 void splash_run(HINSTANCE hInst);
 
+/* Free the logo HBITMAPs.  Call once during shutdown (after gui cleanup). */
+void splash_cleanup(void);
+
 #endif /* SPLASH_H */

@@ -28,7 +28,6 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev,
 {
     (void)hPrev;
     (void)cmdLine;
-    (void)nShow;
 
     /* Initialize common controls (status bar, etc.) */
     INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_BAR_CLASSES | ICC_PROGRESS_CLASS };
@@ -58,7 +57,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev,
         splash_run(hInst);
     }
 
-    ShowWindow(hwnd, SW_SHOWDEFAULT);
+    ShowWindow(hwnd, nShow);
     UpdateWindow(hwnd);
 
     /* Check for a newer GitHub release in the background.

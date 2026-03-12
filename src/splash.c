@@ -88,19 +88,21 @@ void splash_load_logo(void)
 
     /* Build path: <exe_dir>config\logo.png */
     char dir[MAX_PATH];
-    GetModuleFileNameA(NULL, dir, MAX_PATH);
+    DWORD dir_n = GetModuleFileNameA(NULL, dir, MAX_PATH);
+    if (dir_n == 0 || dir_n >= MAX_PATH) return;
     char *sep = strrchr(dir, '\\');
     if (sep) sep[1] = '\0'; else dir[0] = '\0';
 
-    char path_a[MAX_PATH];
+    char path_a[MAX_PATH + 32];
     snprintf(path_a, sizeof(path_a), "%sconfig\\logo.png", dir);
 
     if (GetFileAttributesA(path_a) == INVALID_FILE_ATTRIBUTES)
         return;  /* no config\logo.png — that's fine */
 
     /* Convert path to wide for GDI+ */
-    WCHAR path_w[MAX_PATH];
-    MultiByteToWideChar(CP_ACP, 0, path_a, -1, path_w, MAX_PATH);
+    WCHAR path_w[MAX_PATH + 32];
+    if (!MultiByteToWideChar(CP_ACP, 0, path_a, -1, path_w, MAX_PATH + 32))
+        return;
 
     /* Load gdiplus.dll dynamically */
     HMODULE hGdip = LoadLibraryA("gdiplus.dll");
@@ -124,11 +126,11 @@ void splash_load_logo(void)
     }
 
     ULONG_PTR token = 0;
-    GdipStartupInput si = { 1, 0, FALSE, FALSE };
+    GdipStartupInput si = { 1, 0, TRUE, FALSE };
     if (pfnStart(&token, &si, NULL) != 0) { FreeLibrary(hGdip); return; }
 
-    GpImage *img = NULL;
-    if (pfnLoad(path_w, (void**)&img) != 0) { pfnStop(token); FreeLibrary(hGdip); return; }
+    GpImage img = NULL;
+    if (pfnLoad(path_w, &img) != 0) { pfnStop(token); FreeLibrary(hGdip); return; }
 
     UINT iw = 0, ih = 0;
     pfnW(img, &iw);
@@ -158,6 +160,10 @@ void splash_load_logo(void)
         g_logo_h  = (int)ih;
         g_logo_off = LOGO_OFFSET;
         g_splash_h = SPLASH_H_LOGO;
+    } else {
+        /* Cleanup on failure — delete any successfully created bitmaps */
+        if (ok_splash && hbmp_splash) DeleteObject(hbmp_splash);
+        if (ok_window && hbmp_window) DeleteObject(hbmp_window);
     }
 }
 
@@ -265,6 +271,7 @@ static LRESULT CALLBACK splash_wnd_proc(HWND hwnd, UINT msg,
             HDC hdcMem = CreateCompatibleDC(hdc);
             HBITMAP hOld = (HBITMAP)SelectObject(hdcMem, g_hLogo);
             SetStretchBltMode(hdc, HALFTONE);
+            SetBrushOrgEx(hdc, 0, 0, NULL);
             StretchBlt(hdc, lx, ly, dw, dh,
                        hdcMem, 0, 0, g_logo_w, g_logo_h, SRCCOPY);
             SelectObject(hdcMem, hOld);
@@ -309,8 +316,18 @@ HBITMAP splash_get_logo_for_window(int *out_w, int *out_h)
     return g_hLogoWindow ? g_hLogoWindow : g_hLogo;
 }
 
+void splash_cleanup(void)
+{
+    if (g_hLogo)       { DeleteObject(g_hLogo);       g_hLogo       = NULL; }
+    if (g_hLogoWindow) { DeleteObject(g_hLogoWindow); g_hLogoWindow = NULL; }
+}
+
 void splash_run(HINSTANCE hInst)
 {
+    /* Reset state in case of multiple calls */
+    g_ticks   = 0;
+    g_closing = 0;
+
     /* Check for config\logo.png and load it if present (idempotent) */
     splash_load_logo();
 
@@ -324,17 +341,25 @@ void splash_run(HINSTANCE hInst)
     wc.lpszClassName = SPLASH_CLASS;
     RegisterClassExA(&wc);
 
+    /* Compute outer window size from desired client area */
+    DWORD style   = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU;
+    DWORD exstyle = WS_EX_TOPMOST;
+    RECT rc = { 0, 0, SPLASH_W, g_splash_h };
+    AdjustWindowRectEx(&rc, style, FALSE, exstyle);
+    int win_w = rc.right  - rc.left;
+    int win_h = rc.bottom - rc.top;
+
     /* Center on primary monitor */
     int sx = GetSystemMetrics(SM_CXSCREEN);
     int sy = GetSystemMetrics(SM_CYSCREEN);
-    int x  = (sx - SPLASH_W)    / 2;
-    int y  = (sy - g_splash_h)  / 2;
+    int x  = (sx - win_w) / 2;
+    int y  = (sy - win_h) / 2;
 
     HWND hwnd = CreateWindowExA(
-        WS_EX_TOPMOST,
+        exstyle,
         SPLASH_CLASS, "Name Cleaner - Starting AI",
-        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
-        x, y, SPLASH_W, g_splash_h,
+        style,
+        x, y, win_w, win_h,
         NULL, NULL, hInst, NULL);
 
     if (!hwnd) return;

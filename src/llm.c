@@ -37,7 +37,8 @@ static char            g_model_path[MAX_PATH * 2] = {0};
 
 static void get_exe_dir(char *buf, size_t bufsz)
 {
-    GetModuleFileNameA(NULL, buf, (DWORD)bufsz);
+    DWORD n = GetModuleFileNameA(NULL, buf, (DWORD)bufsz);
+    if (n == 0 || n >= (DWORD)bufsz) { buf[0] = '\0'; return; }
     char *sep = strrchr(buf, '\\');
     if (sep) sep[1] = '\0';
     else     buf[0] = '\0';
@@ -80,7 +81,8 @@ static int http_get_status(const char *path)
     if (!hConn) return 0;
 
     wchar_t wpath[256];
-    MultiByteToWideChar(CP_ACP, 0, path, -1, wpath, 256);
+    if (!MultiByteToWideChar(CP_ACP, 0, path, -1, wpath, 256))
+        { WinHttpCloseHandle(hConn); return 0; }
 
     HINTERNET hReq = WinHttpOpenRequest(hConn, L"GET", wpath,
                                         NULL, WINHTTP_NO_REFERER,
@@ -114,7 +116,8 @@ static int http_post_json(const char *path, const char *body,
     if (!hConn) return 0;
 
     wchar_t wpath[256];
-    MultiByteToWideChar(CP_ACP, 0, path, -1, wpath, 256);
+    if (!MultiByteToWideChar(CP_ACP, 0, path, -1, wpath, 256))
+        { WinHttpCloseHandle(hConn); return 0; }
 
     HINTERNET hReq = WinHttpOpenRequest(hConn, L"POST", wpath,
                                         NULL, WINHTTP_NO_REFERER,
@@ -136,9 +139,11 @@ static int http_post_json(const char *path, const char *body,
                 DWORD n;
                 char chunk[4096];
                 while (WinHttpReadData(hReq, chunk, sizeof(chunk)-1, &n) && n > 0) {
-                    if (pos + n < resp_sz - 1) {
+                    if (pos + n <= resp_sz - 1) {
                         memcpy(resp + pos, chunk, n);
                         pos += n;
+                    } else {
+                        break; /* response exceeds buffer — stop reading */
                     }
                 }
                 resp[pos] = '\0';
@@ -286,6 +291,7 @@ static void build_prompt(const char *raw, const char *cleaned,
 /* Escape a string for embedding inside a JSON double-quoted value. */
 static void json_escape(const char *src, char *dst, size_t dstsz)
 {
+    if (dstsz < 4) { if (dstsz > 0) dst[0] = '\0'; return; }
     size_t i = 0;
     while (*src && i < dstsz - 3) {
         switch (*src) {
@@ -394,6 +400,9 @@ static DWORD WINAPI startup_thread(LPVOID param)
                             WINHTTP_NO_PROXY_NAME,
                             WINHTTP_NO_PROXY_BYPASS, 0);
     if (!g_session) {
+        TerminateProcess(g_proc, 0);
+        CloseHandle(g_proc);
+        g_proc = NULL;
         InterlockedExchange(&g_state, -1);
         return 0;
     }
@@ -443,16 +452,17 @@ void llm_init(void)
     }
 
     g_thread = CreateThread(NULL, 0, startup_thread, NULL, 0, NULL);
+    if (!g_thread) InterlockedExchange(&g_state, -1);
 }
 
 void llm_shutdown(void)
 {
     if (g_thread) {
-        WaitForSingleObject(g_thread, 2000); /* let startup thread finish */
         /* TerminateThread is generally unsafe but acceptable here: the process
          * exits immediately after llm_shutdown(), so any transient lock state
-         * is irrelevant. */
-        TerminateThread(g_thread, 0);
+         * is irrelevant.  Only terminate if the wait timed out. */
+        if (WaitForSingleObject(g_thread, 2000) != WAIT_OBJECT_0)
+            TerminateThread(g_thread, 0);
         CloseHandle(g_thread);
         g_thread = NULL;
     }

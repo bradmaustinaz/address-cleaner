@@ -3,6 +3,12 @@
 #include <string.h>
 #include <ctype.h>
 #include "rules.h"
+#include "names.h"
+
+/* Ensure RULES_BUF_MAX stays in sync with NAME_MAX_LEN */
+#if RULES_BUF_MAX != NAME_MAX_LEN
+#error "RULES_BUF_MAX and NAME_MAX_LEN must be equal"
+#endif
 
 /* =========================================================================
  * Optional step-by-step debug log  (compiled in only for DEBUG builds)
@@ -133,9 +139,8 @@ static int str_ieq(const char *a, const char *b)
  */
 static int all_words_in(const char *haystack, const char *needle)
 {
-    char tmp[512];
-    strncpy(tmp, needle, sizeof(tmp) - 1);
-    tmp[sizeof(tmp) - 1] = '\0';
+    char tmp[RULES_BUF_MAX];
+    snprintf(tmp, sizeof(tmp), "%s", needle);
 
     char *p = tmp;
     while (*p) {
@@ -271,9 +276,8 @@ static int strip_and_trust(char *s, int *flags)
         if (icase_ncmp(after, "THE ", 4) == 0) after += 4;
         while (isspace((unsigned char)*after)) after++;
 
-        char right_name[512];
-        strncpy(right_name, after, sizeof(right_name) - 1);
-        right_name[sizeof(right_name) - 1] = '\0';
+        char right_name[RULES_BUF_MAX];
+        snprintf(right_name, sizeof(right_name), "%s", after);
 
         /* Quick-strip trust keywords from the right-side copy so we are
          * left with just the person name for comparison. */
@@ -284,7 +288,7 @@ static int strip_and_trust(char *s, int *flags)
         rtrim(right_name);
 
         /* Build the left-side name for comparison. */
-        char left[512];
+        char left[RULES_BUF_MAX];
         size_t llen = (size_t)(last_amp - s);
         if (llen < sizeof(left)) {
             memcpy(left, s, llen);
@@ -304,9 +308,8 @@ static int strip_and_trust(char *s, int *flags)
                 int use_right = 1;
                 if (!all_words_in(left, right_name)) {
                     /* right is a strict superset — validate extra words */
-                    char rtmp[512];
-                    strncpy(rtmp, right_name, sizeof(rtmp) - 1);
-                    rtmp[sizeof(rtmp) - 1] = '\0';
+                    char rtmp[RULES_BUF_MAX];
+                    snprintf(rtmp, sizeof(rtmp), "%s", right_name);
                     char *rp = rtmp;
                     while (*rp) {
                         while (isspace((unsigned char)*rp)) rp++;
@@ -383,7 +386,7 @@ static int extract_cotenant(char *s, int *flags)
     if (icase_ncmp(after_amp, "THE ", 4) == 0) return 0;
 
     /* Left side must contain trust language */
-    char left[512];
+    char left[RULES_BUF_MAX];
     size_t llen = (size_t)(amp - s);
     if (llen >= sizeof(left)) return 0;
     memcpy(left, s, llen);
@@ -394,9 +397,8 @@ static int extract_cotenant(char *s, int *flags)
     if (find_word(after_amp, "TRUST")) return 0;
 
     /* Build and trim the right side */
-    char right[512];
-    strncpy(right, after_amp, sizeof(right) - 1);
-    right[sizeof(right) - 1] = '\0';
+    char right[RULES_BUF_MAX];
+    snprintf(right, sizeof(right), "%s", after_amp);
     { int i = (int)strlen(right) - 1;
       while (i >= 0 && (isspace((unsigned char)right[i])
                         || right[i] == ',' || right[i] == '&'))
@@ -568,17 +570,17 @@ static int strip_stale_family(char *s)
     const size_t flen = 6; /* strlen("FAMILY") */
     if (slen <= flen) return 0;
 
-    const char *fam = s + slen - flen;
+    char *fam = s + slen - flen;
     if (!is_boundary(*(fam - 1))) return 0;
     if (icase_ncmp(fam, "FAMILY", flen) != 0) return 0;
 
     /* Count "real" words before FAMILY (skip single-letter initials and &) */
     int real_words = 0;
-    const char *p = s;
+    char *p = s;
     while (p < fam) {
         while (p < fam && (isspace((unsigned char)*p) || *p == '&')) p++;
         if (p >= fam) break;
-        const char *ws = p;
+        char *ws = p;
         while (p < fam && !isspace((unsigned char)*p) && *p != '&') p++;
         size_t wlen = (size_t)(p - ws);
         if (wlen > 1) real_words++;  /* skip single-letter initials */
@@ -587,7 +589,7 @@ static int strip_stale_family(char *s)
     if (real_words <= 1) return 0;  /* "DONAHUE FAMILY" — keep */
 
     /* Strip " FAMILY" (also remove the space before it) */
-    char *cut = (char *)(fam - 1);
+    char *cut = fam - 1;
     *cut = '\0';
     rtrim(s);
     return 1;
@@ -766,13 +768,13 @@ static int strip_truncated_suffix(char *s)
                 if (trylen == wlen && trunc_vocab[i].trunc_only) continue;
 
                 if ((size_t)trylen >= slen) continue; /* must leave preceding content */
-                const char *pos = s + slen - trylen;
+                char *pos = s + slen - trylen;
                 if (!is_boundary(*(pos - 1))) continue;  /* word boundary on left */
 
                 if (icase_ncmp(pos, trunc_vocab[i].word, (size_t)trylen) != 0) continue;
 
                 /* Match — truncate here */
-                *(char *)pos = '\0';
+                *pos = '\0';
                 rtrim(s);
                 found = 1;
                 stripped_any = 1;
@@ -805,9 +807,9 @@ static int strip_truncated_suffix(char *s)
      */
     {
         /* Tokenize: collect start/length of each word (max 32 words) */
-        struct { const char *start; int len; } words[32];
+        struct { char *start; int len; } words[32];
         int nwords = 0;
-        const char *p = s;
+        char *p = s;
         while (*p && nwords < 32) {
             while (*p && isspace((unsigned char)*p)) p++;
             if (!*p) break;
@@ -844,7 +846,7 @@ static int strip_truncated_suffix(char *s)
             if (!all_ok) continue;
 
             /* Strip everything from anchor word onward */
-            *(char *)words[wi].start = '\0';
+            *words[wi].start = '\0';
             rtrim(s);
             stripped_any = 1;
             break;
@@ -860,13 +862,13 @@ static int strip_truncated_suffix(char *s)
     if (!stripped_any) {
         size_t slen = strlen(s);
         if (slen > 5) {
-            const char *end = s + slen;
-            const char *wp = end;
+            char *end = s + slen;
+            char *wp = end;
             while (wp > s && !isspace((unsigned char)*(wp - 1))) wp--;
             size_t wlen = (size_t)(end - wp);
             if (wlen >= 5 && wp > s && is_boundary(*(wp - 1)) &&
                 icase_ncmp(wp, "SURVI", 5) == 0) {
-                *(char *)wp = '\0';
+                *wp = '\0';
                 rtrim(s);
                 stripped_any = 1;
             }
@@ -882,18 +884,18 @@ static int strip_truncated_suffix(char *s)
         size_t slen2 = strlen(s);
         const size_t llen = 6; /* strlen("LIVING") */
         if (slen2 > llen) {
-            const char *pos2 = s + slen2 - llen;
+            char *pos2 = s + slen2 - llen;
             if (is_boundary(*(pos2 - 1)) &&
                 icase_ncmp(pos2, "LIVING", llen) == 0) {
                 int wc = 0;
-                for (const char *p2 = s; *p2; ) {
+                for (char *p2 = s; *p2; ) {
                     while (*p2 && isspace((unsigned char)*p2)) p2++;
                     if (!*p2) break;
                     wc++;
                     while (*p2 && !isspace((unsigned char)*p2)) p2++;
                 }
                 if (wc >= 3) {
-                    *(char *)pos2 = '\0';
+                    *pos2 = '\0';
                     rtrim(s);
                     stripped_any = 1;
                 }
@@ -924,15 +926,23 @@ static const char *trustee_phrases[] = {
 
 static int strip_trustee(char *s)
 {
-    for (int i = 0; trustee_phrases[i]; i++) {
-        char *p = find_word(s, trustee_phrases[i]);
-        if (p) {
-            str_erase(s, (size_t)(p - s), strlen(trustee_phrases[i]));
-            rtrim(s);
-            return 1;
+    int stripped = 0;
+    int safety = 0;
+    for (;;) {
+        int found = 0;
+        for (int i = 0; trustee_phrases[i]; i++) {
+            char *p = find_word(s, trustee_phrases[i]);
+            if (p) {
+                str_erase(s, (size_t)(p - s), strlen(trustee_phrases[i]));
+                rtrim(s);
+                stripped = 1;
+                found = 1;
+                break; /* restart scan from longest phrase */
+            }
         }
+        if (!found || ++safety > 10) break;
     }
-    return 0;
+    return stripped;
 }
 
 /* =========================================================================
@@ -991,12 +1001,14 @@ static const JunkEntry junk_table[] = {
 static int strip_junk(char *s, int *flags)
 {
     int matched = 0;
+    int safety = 0;
     for (int i = 0; junk_table[i].pattern; i++) {
         char *p = find_word(s, junk_table[i].pattern);
         if (p) {
             str_erase(s, (size_t)(p - s), strlen(junk_table[i].pattern));
             *flags |= junk_table[i].flag;
             matched = 1;
+            if (++safety > 20) break;
             i = -1; /* restart — removal may expose new matches */
         }
     }
@@ -1093,7 +1105,7 @@ static int strip_address_in_name(char *s)
 
 static void collapse_spaced_acronym(char *s)
 {
-    char out[512];
+    char out[RULES_BUF_MAX];
     size_t oi = 0;
     char *p = s;
 
@@ -1109,7 +1121,7 @@ static void collapse_spaced_acronym(char *s)
 
         if (wlen == 1 && isupper((unsigned char)*wstart)) {
             /* Try to grow a run of consecutive single-uppercase tokens */
-            char run[512];
+            char run[RULES_BUF_MAX];
             size_t rlen = 0;
             run[rlen++] = *wstart;
 
@@ -1173,7 +1185,7 @@ static int deduplicate_and(char *s)
     char *amp = strchr(s, '&');
     if (!amp) return 0;
 
-    char left[512];
+    char left[RULES_BUF_MAX];
     size_t llen = (size_t)(amp - s);
     if (llen >= sizeof(left)) return 0;
     memcpy(left, s, llen);
@@ -1244,7 +1256,7 @@ static int deduplicate_and(char *s)
             size_t rwlen = strlen(right);
             if (rwlen >= 4 &&
                 tolower((unsigned char)right[rwlen - 1]) == 's') {
-                char stem[512];
+                char stem[RULES_BUF_MAX];
                 memcpy(stem, right, rwlen - 1);
                 stem[rwlen - 1] = '\0';
                 if (find_word(left, stem)) {
@@ -1270,7 +1282,7 @@ static int combine_couple(char *s, size_t slen)
     char *amp = strchr(s, '&');
     if (!amp) return 0;
 
-    char left[512], right[512];
+    char left[RULES_BUF_MAX], right[RULES_BUF_MAX];
 
     size_t llen = (size_t)(amp - s);
     if (llen >= sizeof(left)) return 0;
@@ -1281,8 +1293,7 @@ static int combine_couple(char *s, size_t slen)
 
     char *rp = amp + 1;
     while (isspace((unsigned char)*rp)) rp++;
-    strncpy(right, rp, sizeof(right) - 1);
-    right[sizeof(right) - 1] = '\0';
+    snprintf(right, sizeof(right), "%s", rp);
     { int i = (int)strlen(right) - 1;
       while (i >= 0 && isspace((unsigned char)right[i])) right[i--] = '\0'; }
 
@@ -1356,8 +1367,25 @@ int rules_apply(char *s, size_t slen)
         int changed = 0;
         while ((p = find_word(s, "OF THE")) != NULL)
             { str_erase(s, (size_t)(p - s), 6); changed = 1; }
-        while ((p = find_word(s, "OF")) != NULL && *(p + 2) == '\0')
-            { str_erase(s, (size_t)(p - s), 2); changed = 1; }
+        /* Strip trailing "OF" — scan backwards to find the one at the end */
+        {
+            size_t sl = strlen(s);
+            while (sl >= 2) {
+                /* Check if the last word is "OF" */
+                const char *end = s + sl;
+                const char *candidate = end - 2;
+                if (icase_ncmp(candidate, "OF", 2) == 0 &&
+                    (candidate == s || is_boundary(*(candidate - 1))) &&
+                    *(candidate + 2) == '\0') {
+                    str_erase(s, (size_t)(candidate - s), 2);
+                    rtrim(s);
+                    sl = strlen(s);
+                    changed = 1;
+                } else {
+                    break;
+                }
+            }
+        }
         if (changed) dlog("strip_of_the", s);
     }
 
@@ -1391,9 +1419,8 @@ int rules_apply(char *s, size_t slen)
     if (!(flags & NAME_FLAG_EMPTY)) {
         char *wptr[8];
         int   wc = 0;
-        char  scan[512];
-        strncpy(scan, s, sizeof(scan) - 1);
-        scan[sizeof(scan) - 1] = '\0';
+        char  scan[RULES_BUF_MAX];
+        snprintf(scan, sizeof(scan), "%s", s);
         char *sp = scan;
         while (*sp && wc < 8) {
             while (*sp && isspace((unsigned char)*sp)) sp++;

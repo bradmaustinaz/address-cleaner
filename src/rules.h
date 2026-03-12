@@ -11,6 +11,11 @@
  * Extend the rule tables in rules.c to add new patterns.
  */
 
+/* Maximum buffer size for name strings — must match NAME_MAX_LEN in names.h.
+ * We cannot #include "names.h" here (circular dependency), so a static
+ * assertion in rules.c ensures they stay in sync. */
+#define RULES_BUF_MAX  512
+
 /* Flags returned by rules_apply() — bitmask */
 #define NAME_FLAG_WAS_TRUST    (1 << 0)  /* Trust language stripped        */
 #define NAME_FLAG_WAS_ET_AL    (1 << 1)  /* Et al / et ux / et vir removed */

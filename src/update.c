@@ -49,7 +49,8 @@ static char          s_dl_dest[MAX_PATH + 32] = {0};
 
 static void get_exe_dir(char *buf, size_t bufsz)
 {
-    GetModuleFileNameA(NULL, buf, (DWORD)bufsz);
+    DWORD n = GetModuleFileNameA(NULL, buf, (DWORD)bufsz);
+    if (n == 0 || n >= (DWORD)bufsz) { buf[0] = '\0'; return; }
     char *sep = strrchr(buf, '\\');
     if (sep) sep[1] = '\0';
     else     buf[0] = '\0';
@@ -216,11 +217,9 @@ static int is_newer_version(const char *current, const char *fetched_tag)
     parse_ver(current,     &cmaj, &cmin, &cpat, &cpre);
     parse_ver(fetched_tag, &fmaj, &fmin, &fpat, &fpre);
 
-    long cv = cmaj * 10000L + cmin * 100L + cpat;
-    long fv = fmaj * 10000L + fmin * 100L + fpat;
-
-    if (fv > cv) return 1;
-    if (fv < cv) return 0;
+    if (fmaj != cmaj) return fmaj > cmaj;
+    if (fmin != cmin) return fmin > cmin;
+    if (fpat != cpat) return fpat > cpat;
     /* Same numeric version: stable beats pre-release */
     return (cpre && !fpre) ? 1 : 0;
 }
@@ -237,7 +236,7 @@ static int fetch_latest_release(char *tag_out, size_t tag_sz,
     asset_url_out[0] = '\0';
 
     HINTERNET hSession = WinHttpOpen(
-        L"nameclean/" APP_VERSION L" (Windows)",
+        L"nameclean/" APP_VERSION_W L" (Windows)",
         WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
         WINHTTP_NO_PROXY_NAME,
         WINHTTP_NO_PROXY_BYPASS, 0);
@@ -283,7 +282,8 @@ static int fetch_latest_release(char *tag_out, size_t tag_sz,
     if (!body) goto cleanup_req;
     size_t pos = 0;
     DWORD n;
-    while (WinHttpReadData(hReq, body + pos,
+    while (pos < 65535 &&
+           WinHttpReadData(hReq, body + pos,
                            (DWORD)(65535 - pos), &n) && n > 0)
         pos += n;
     body[pos] = '\0';
@@ -445,7 +445,7 @@ static DWORD WINAPI dl_thread(LPVOID param)
     if (hlen >= sizeof(host)) goto done;
     memcpy(host, url, hlen);
     host[hlen] = '\0';
-    strncpy(path_part, slash, sizeof(path_part) - 1);
+    snprintf(path_part, sizeof(path_part), "%s", slash);
 
     {
         /* Convert host to wide */
@@ -503,7 +503,8 @@ static DWORD WINAPI dl_thread(LPVOID param)
         }
 
         char chunk[16384];
-        DWORD n, total = 0;
+        DWORD n;
+        ULONGLONG total = 0;
         ok = 1;
         while (WinHttpReadData(hReq, chunk, sizeof(chunk), &n) && n > 0) {
             if (s_dl_cancel) { ok = 0; break; }
@@ -512,14 +513,15 @@ static DWORD WINAPI dl_thread(LPVOID param)
                 { ok = 0; break; }
             total += n;
             if (content_len > 0 && hwnd) {
-                int pct = (int)(total * 100UL / content_len);
+                int pct = (int)(total * 100ULL / content_len);
                 PostMessage(hwnd, WM_UPD_PROGRESS, (WPARAM)pct, 0);
             }
         }
 
         CloseHandle(hFile);
-        /* Keep partial downloads on failure so the user doesn't lose
-         * what was already fetched — they can retry or finish manually. */
+        /* Delete partial/corrupt downloads to avoid offering a broken
+         * file for installation on the next launch. */
+        if (!ok) DeleteFileA(s_dl_dest);
 
         WinHttpCloseHandle(hReq);
         WinHttpCloseHandle(hConn);

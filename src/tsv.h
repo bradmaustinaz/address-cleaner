@@ -2,6 +2,7 @@
 #define TSV_H
 
 #include <stddef.h>
+#include <stdio.h>
 
 #define TSV_MAX_FIELDS  64
 #define TSV_MAX_FIELD   1024

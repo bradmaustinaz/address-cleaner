@@ -23,12 +23,13 @@ int slog_open(void)
 
     /* Get exe directory */
     char exe_dir[MAX_PATH];
-    GetModuleFileNameA(NULL, exe_dir, MAX_PATH);
+    DWORD n = GetModuleFileNameA(NULL, exe_dir, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return 0;
     char *sep = strrchr(exe_dir, '\\');
     if (sep) sep[1] = '\0'; else exe_dir[0] = '\0';
 
     /* Create logs subdirectory */
-    char logs_dir[MAX_PATH];
+    char logs_dir[MAX_PATH + 8];
     snprintf(logs_dir, sizeof(logs_dir), "%slogs", exe_dir);
     CreateDirectoryA(logs_dir, NULL); /* OK if already exists */
 
@@ -65,6 +66,7 @@ void slog_row(const NameResult *nr,
     fputc('\t', g_slog);
     write_field(g_slog, ai_output ? ai_output : "");
     fputc('\n', g_slog);
+    fflush(g_slog);
 }
 
 void slog_close(int n_cleaned, int n_flagged, int n_trust)

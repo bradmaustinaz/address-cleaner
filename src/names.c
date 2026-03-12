@@ -303,6 +303,9 @@ static void apply_title_case(char *s)
         if (res_pos + elen < NAME_MAX_LEN - 1) {
             memcpy(result + res_pos, emit, elen);
             res_pos += elen;
+        } else {
+            *p = saved;
+            break;  /* buffer full — stop rather than skip words */
         }
 
         *p = saved;
@@ -327,12 +330,10 @@ int name_clean(const char *raw, NameResult *result)
         return -1;
     }
 
-    strncpy(result->raw, raw, NAME_MAX_LEN - 1);
-    result->raw[NAME_MAX_LEN - 1] = '\0'; /* explicit: don't rely solely on memset */
+    snprintf(result->raw, NAME_MAX_LEN, "%s", raw);
 
     char work[NAME_MAX_LEN];
-    strncpy(work, raw, NAME_MAX_LEN - 1);
-    work[NAME_MAX_LEN - 1] = '\0';
+    snprintf(work, NAME_MAX_LEN, "%s", raw);
 
     char *start = work;
     while (isspace((unsigned char)*start)) start++;
@@ -445,8 +446,7 @@ int name_clean(const char *raw, NameResult *result)
                         rpos += w0l;
                     }
                     reord[rpos] = '\0';
-                    strncpy(result->cleaned, reord, NAME_MAX_LEN - 1);
-                    result->cleaned[NAME_MAX_LEN - 1] = '\0';
+                    snprintf(result->cleaned, NAME_MAX_LEN, "%s", reord);
                 }
             }
         }
@@ -472,7 +472,7 @@ int name_clean(const char *raw, NameResult *result)
                         up[k] = (char)toupper(c);
                         lo[k] = (char)tolower(c);
                         if (up[k]=='A'||up[k]=='E'||up[k]=='I'||
-                            up[k]=='O'||up[k]=='U') has_vowel = 1;
+                            up[k]=='O'||up[k]=='U'||up[k]=='Y') has_vowel = 1;
                     }
                     if (all_alpha && !has_vowel
                         && !in_table(up, upper_words)
@@ -520,8 +520,7 @@ int name_clean(const char *raw, NameResult *result)
         /* rules_apply stripped everything (e.g. "Not Available From The
          * Data Source" → erased by the junk table → "").  Use the
          * standard mail-merge placeholder so the label still has content. */
-        strncpy(result->cleaned, "Current Resident", NAME_MAX_LEN - 1);
-        result->cleaned[NAME_MAX_LEN - 1] = '\0';
+        snprintf(result->cleaned, NAME_MAX_LEN, "Current Resident");
     }
 
     /* AI fallback: for names the rule engine flagged as needing review,
@@ -530,35 +529,34 @@ int name_clean(const char *raw, NameResult *result)
         !(result->flags & NAME_FLAG_EMPTY) &&
         llm_is_ready()) {
         /* Save what we're sending to the LLM for session logging */
-        strncpy(result->ai_input, result->cleaned, NAME_MAX_LEN - 1);
-        result->ai_input[NAME_MAX_LEN - 1] = '\0';
+        snprintf(result->ai_input, NAME_MAX_LEN, "%s", result->cleaned);
 
         char ai_out[NAME_MAX_LEN];
         if (llm_clean_name(result->raw, result->cleaned,
                            ai_out, sizeof(ai_out)) && *ai_out) {
             /* Save raw LLM response for session logging */
-            strncpy(result->ai_output, ai_out, NAME_MAX_LEN - 1);
-            result->ai_output[NAME_MAX_LEN - 1] = '\0';
+            snprintf(result->ai_output, NAME_MAX_LEN, "%s", ai_out);
 
             /* Reject AI output that reintroduces trust language the
              * rules engine already stripped (LLM hallucination). */
             int ai_ok = 1;
             if (result->flags & NAME_FLAG_WAS_TRUST) {
                 /* Case-insensitive search for "trust" as a whole word */
-                for (const char *tp = ai_out; *tp; tp++) {
+                size_t ai_len = strlen(ai_out);
+                for (size_t ti = 0; ti + 4 < ai_len; ti++) {
+                    const char *tp = ai_out + ti;
                     if (tolower((unsigned char)tp[0]) == 't' &&
                         tolower((unsigned char)tp[1]) == 'r' &&
                         tolower((unsigned char)tp[2]) == 'u' &&
                         tolower((unsigned char)tp[3]) == 's' &&
                         tolower((unsigned char)tp[4]) == 't') {
                         /* Check word boundaries */
-                        int lb = (tp == ai_out) ||
-                                 !isalnum((unsigned char)*(tp - 1));
+                        int lb = (ti == 0) ||
+                                 !isalnum((unsigned char)tp[-1]);
                         int rb = !tp[5] ||
                                  !isalnum((unsigned char)tp[5]);
                         if (lb && rb) { ai_ok = 0; break; }
                     }
-                    if (!tp[1] || !tp[2] || !tp[3] || !tp[4]) break;
                 }
             }
             if (ai_ok) {
@@ -569,8 +567,7 @@ int name_clean(const char *raw, NameResult *result)
                         *ap = (char)toupper((unsigned char)*ap);
                 }
 
-                strncpy(result->cleaned, ai_out, NAME_MAX_LEN - 1);
-                result->cleaned[NAME_MAX_LEN - 1] = '\0';
+                snprintf(result->cleaned, NAME_MAX_LEN, "%s", ai_out);
                 result->flags |= NAME_FLAG_WAS_AI;
             }
         }
