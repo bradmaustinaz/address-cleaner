@@ -12,7 +12,7 @@
  * the running binary is.
  * ====================================================================== */
 
-#define APP_VERSION    "0.4.3-alpha"
+#define APP_VERSION    "0.4.3"
 #define APP_REPO_OWNER "bradmaustinaz"
 #define APP_REPO_NAME  "address-cleaner"
 #define APP_EXE_NAME   "nameclean.exe"
