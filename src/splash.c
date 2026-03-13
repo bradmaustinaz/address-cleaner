@@ -6,6 +6,12 @@
 #include "splash.h"
 #include "llm.h"
 
+#ifdef DEBUG
+  #define DBGLOG(...) fprintf(stderr, __VA_ARGS__)
+#else
+  #define DBGLOG(...) ((void)0)
+#endif
+
 /* =========================================================================
  * Layout constants
  *
@@ -89,24 +95,35 @@ void splash_load_logo(void)
     /* Build path: <exe_dir>config\logo.png */
     char dir[MAX_PATH];
     DWORD dir_n = GetModuleFileNameA(NULL, dir, MAX_PATH);
-    if (dir_n == 0 || dir_n >= MAX_PATH) return;
+    if (dir_n == 0 || dir_n >= MAX_PATH) {
+        DBGLOG("[logo] GetModuleFileName failed\n");
+        return;
+    }
     char *sep = strrchr(dir, '\\');
     if (sep) sep[1] = '\0'; else dir[0] = '\0';
 
     char path_a[MAX_PATH + 32];
     snprintf(path_a, sizeof(path_a), "%sconfig\\logo.png", dir);
+    DBGLOG("[logo] Looking for: %s\n", path_a);
 
-    if (GetFileAttributesA(path_a) == INVALID_FILE_ATTRIBUTES)
+    if (GetFileAttributesA(path_a) == INVALID_FILE_ATTRIBUTES) {
+        DBGLOG("[logo] File not found — skipping\n");
         return;  /* no config\logo.png — that's fine */
+    }
 
     /* Convert path to wide for GDI+ */
     WCHAR path_w[MAX_PATH + 32];
-    if (!MultiByteToWideChar(CP_ACP, 0, path_a, -1, path_w, MAX_PATH + 32))
+    if (!MultiByteToWideChar(CP_ACP, 0, path_a, -1, path_w, MAX_PATH + 32)) {
+        DBGLOG("[logo] MultiByteToWideChar failed\n");
         return;
+    }
 
     /* Load gdiplus.dll dynamically */
     HMODULE hGdip = LoadLibraryA("gdiplus.dll");
-    if (!hGdip) return;
+    if (!hGdip) {
+        DBGLOG("[logo] Failed to load gdiplus.dll\n");
+        return;
+    }
 
     /* Cast through void* to avoid -Wcast-function-type on FARPROC → typed ptr */
 #pragma GCC diagnostic push
@@ -121,20 +138,33 @@ void splash_load_logo(void)
 #pragma GCC diagnostic pop
 
     if (!pfnStart || !pfnStop || !pfnLoad || !pfnW || !pfnH || !pfnBmp || !pfnFree) {
+        DBGLOG("[logo] Failed to resolve GDI+ functions\n");
         FreeLibrary(hGdip);
         return;
     }
 
     ULONG_PTR token = 0;
-    GdipStartupInput si = { 1, 0, TRUE, FALSE };
-    if (pfnStart(&token, &si, NULL) != 0) { FreeLibrary(hGdip); return; }
+    GdipStartupInput si = { 1, 0, FALSE, FALSE };
+    int startRet = pfnStart(&token, &si, NULL);
+    if (startRet != 0) {
+        DBGLOG("[logo] GdiplusStartup failed (status=%d)\n", startRet);
+        FreeLibrary(hGdip);
+        return;
+    }
 
     GpImage img = NULL;
-    if (pfnLoad(path_w, &img) != 0) { pfnStop(token); FreeLibrary(hGdip); return; }
+    int loadRet = pfnLoad(path_w, &img);
+    if (loadRet != 0) {
+        DBGLOG("[logo] GdipLoadImageFromFile failed (status=%d)\n", loadRet);
+        pfnStop(token);
+        FreeLibrary(hGdip);
+        return;
+    }
 
     UINT iw = 0, ih = 0;
     pfnW(img, &iw);
     pfnH(img, &ih);
+    DBGLOG("[logo] Loaded %ux%u image\n", iw, ih);
 
     /* Create splash version: composited onto white */
     HBITMAP hbmp_splash = NULL;
@@ -149,6 +179,9 @@ void splash_load_logo(void)
     HBITMAP hbmp_window = NULL;
     int ok_window = pfnBmp(img, &hbmp_window, gdip_bg) == 0;
 
+    DBGLOG("[logo] HBITMAP creation: splash=%s window=%s\n",
+           ok_splash ? "OK" : "FAIL", ok_window ? "OK" : "FAIL");
+
     pfnFree(img);
     pfnStop(token);
     FreeLibrary(hGdip);
@@ -160,10 +193,13 @@ void splash_load_logo(void)
         g_logo_h  = (int)ih;
         g_logo_off = LOGO_OFFSET;
         g_splash_h = SPLASH_H_LOGO;
+        DBGLOG("[logo] Loaded successfully (%dx%d)\n", g_logo_w, g_logo_h);
     } else {
         /* Cleanup on failure — delete any successfully created bitmaps */
         if (ok_splash && hbmp_splash) DeleteObject(hbmp_splash);
         if (ok_window && hbmp_window) DeleteObject(hbmp_window);
+        DBGLOG("[logo] Final check failed: ok_s=%d ok_w=%d iw=%u ih=%u\n",
+               ok_splash, ok_window, iw, ih);
     }
 }
 
