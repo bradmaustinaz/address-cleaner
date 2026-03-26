@@ -51,6 +51,20 @@ int llm_clean_name(const char *raw, const char *rules_result,
 int llm_is_loading(void);
 
 /*
+ * Validate an AI correction against the original and rules-cleaned form.
+ * Asks the LLM whether specific changes are valid or hallucinated.
+ *   raw:          original input
+ *   rules_result: what the rule engine produced
+ *   ai_result:    what the first AI pass produced
+ *   out / outlen: buffer for the validated output
+ *
+ * Returns 1 on success (out filled), 0 on failure (caller should keep
+ * rules_result or ai_result based on its own heuristics).
+ */
+int llm_validate(const char *raw, const char *rules_result,
+                 const char *ai_result, char *out, size_t outlen);
+
+/*
  * Human-readable AI status string for the status bar.
  * Returns one of: "AI: Ready", "AI: Loading...", "AI: No model"
  */

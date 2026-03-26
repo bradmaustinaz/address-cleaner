@@ -12,9 +12,9 @@
  * the running binary is.
  * ====================================================================== */
 
-#define APP_VERSION    "0.4.6"
+#define APP_VERSION    "0.5.0"
 /* Keep APP_VERSION_W in sync when bumping APP_VERSION */
-#define APP_VERSION_W  L"0.4.6"
+#define APP_VERSION_W  L"0.5.0"
 #define APP_REPO_OWNER "bradmaustinaz"
 #define APP_REPO_NAME  "address-cleaner"
 #define APP_EXE_NAME   "nameclean.exe"
