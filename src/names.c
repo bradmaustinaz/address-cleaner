@@ -76,9 +76,19 @@ static const char *exact_form_lookup(const char *lower_key)
 
 /* Business entity abbreviations — always UPPERCASE */
 static const char *upper_words[] = {
-    "LLC", "LLP", "LP", "INC", "CORP", "LTD", "CO",
-    "PC",  "PLC", "NA", "FSB", "PLLC", "DBA", "NV",
+    "LLC", "LLP", "LP", "INC", "CORP", "LTD",
+    "PC",  "PLC", "NA", "FSB", "PLLC", "DBA",
     "USA", "US",  "PO", "TNT",
+    "CO",  /* Company / Colorado */
+    "NV",  /* Nevada (already used for entity names) */
+    /* US state abbreviations — only codes that don't collide with
+     * common surnames or prepositions (excluded: AL, DE, HI, ID, IN,
+     * LA, MA, ME, MI, MO, OH, OK, OR, PA, VA) */
+    "AK", "AZ", "AR", "CA", "CT", "DC", "FL", "GA",
+    "IA", "IL", "KS", "KY", "MD", "MN", "MS", "MT",
+    "NC", "ND", "NE", "NH", "NJ", "NM", "NY",
+    "RI", "SC", "SD", "TN", "TX", "UT", "VT",
+    "WA", "WV", "WI", "WY",
     NULL
 };
 
@@ -154,6 +164,18 @@ static int str_ieq(const char *a, const char *b)
         a++; b++;
     }
     return *a == *b;
+}
+
+/* Case-insensitive comparison of n bytes (like strncasecmp) */
+static int icase_ncmp(const char *a, const char *b, size_t n)
+{
+    for (size_t i = 0; i < n; i++) {
+        int ca = tolower((unsigned char)a[i]);
+        int cb = tolower((unsigned char)b[i]);
+        if (ca != cb) return ca - cb;
+        if (!ca) return 0;
+    }
+    return 0;
 }
 
 static int in_table(const char *word, const char **table)
@@ -235,16 +257,52 @@ static void apply_title_case(char *s)
             emit = word_start;
         }
 
+        /* --- 2b. All-consonant words 3+ chars → likely acronym, keep UPPER.
+         * Vowels: A E I O U Y.  Catches collapsed acronyms (FKH, MDK, BRN,
+         * NNN, KJS).  2-char consonant-only words (NG, ST) are too ambiguous
+         * — those are handled by AI flagging in rules_apply instead. */
+        if (!emit && wlen >= 3) {
+            int all_consonant = 1;
+            for (i = 0; i < wlen; i++) {
+                char ch = (char)toupper((unsigned char)word_start[i]);
+                if (ch=='A'||ch=='E'||ch=='I'||ch=='O'||ch=='U'||ch=='Y'
+                    || !isalpha((unsigned char)word_start[i])) {
+                    all_consonant = 0; break;
+                }
+            }
+            if (all_consonant) {
+                for (i = 0; i < wlen; i++)
+                    word_start[i] = (char)toupper((unsigned char)word_start[i]);
+                emit = word_start;
+            }
+        }
+
         /* --- 3. Single-letter word = initial, always uppercase ---------- */
         if (!emit && wlen == 1 && isalpha((unsigned char)lower[0])) {
             word_start[0] = (char)toupper((unsigned char)word_start[0]);
             emit = word_start;
         }
 
-        /* --- 4. Lower exception (articles/prepositions) ---------------- */
+        /* --- 4. Lower exception (articles/prepositions) ----------------
+         * Only lowercase when the word is NOT the last word in the string.
+         * Final-position "An", "To", etc. are likely surnames (e.g.
+         * "Amy An", "Anh To") and should stay title-cased. */
         if (!emit && word_idx > 0 && in_table(lower, lower_words)) {
-            memcpy(word_start, lower, wlen + 1);
-            emit = word_start;
+            /* Check if this is the last word: `saved` holds the char that
+             * was at *p before NUL-termination.  If it's NUL, this is the
+             * last word.  If it's whitespace, peek past it for more text. */
+            int is_last = (saved == '\0');
+            if (!is_last) {
+                const char *ahead = p + 1;  /* skip past the saved char */
+                while (*ahead && isspace((unsigned char)*ahead)) ahead++;
+                is_last = (*ahead == '\0');
+            }
+            if (!is_last) {
+                /* Not the last word → lowercase */
+                memcpy(word_start, lower, wlen + 1);
+                emit = word_start;
+            }
+            /* else: last word → fall through to title case (surname) */
         }
 
         /* --- 4. Standard title case ------------------------------------ */
@@ -427,6 +485,15 @@ int name_clean(const char *raw, NameResult *result)
             if (nw >= 3 && nw <= 5) {
                 size_t lwlen = (size_t)(we[nw-1] - ws[nw-1]);
                 if (lwlen == 1 && isalpha((unsigned char)ws[nw-1][0])) {
+                    /* Skip reorder when the trailing letter is a roman
+                     * numeral (I, V, X) and this was a trust entity —
+                     * it's a series/version, not a person's initial.
+                     * e.g. "CROSS INVESTMENT I" is not "Last First I". */
+                    char last_ch = (char)toupper((unsigned char)ws[nw-1][0]);
+                    if ((result->flags & NAME_FLAG_WAS_TRUST) &&
+                        (last_ch == 'I' || last_ch == 'V' || last_ch == 'X')) {
+                        goto skip_reorder;
+                    }
                     /* Rebuild: words[1..nw-1] + " " + words[0] */
                     char reord[NAME_MAX_LEN];
                     size_t rpos = 0;
@@ -447,6 +514,7 @@ int name_clean(const char *raw, NameResult *result)
                     }
                     reord[rpos] = '\0';
                     snprintf(result->cleaned, NAME_MAX_LEN, "%s", reord);
+                skip_reorder: ;
                 }
             }
         }
@@ -537,28 +605,203 @@ int name_clean(const char *raw, NameResult *result)
             /* Save raw LLM response for session logging */
             snprintf(result->ai_output, NAME_MAX_LEN, "%s", ai_out);
 
-            /* Reject AI output that reintroduces trust language the
-             * rules engine already stripped (LLM hallucination). */
-            int ai_ok = 1;
-            if (result->flags & NAME_FLAG_WAS_TRUST) {
-                /* Case-insensitive search for "trust" as a whole word */
-                size_t ai_len = strlen(ai_out);
-                for (size_t ti = 0; ti + 4 < ai_len; ti++) {
-                    const char *tp = ai_out + ti;
-                    if (tolower((unsigned char)tp[0]) == 't' &&
-                        tolower((unsigned char)tp[1]) == 'r' &&
-                        tolower((unsigned char)tp[2]) == 'u' &&
-                        tolower((unsigned char)tp[3]) == 's' &&
-                        tolower((unsigned char)tp[4]) == 't') {
-                        /* Check word boundaries */
-                        int lb = (ti == 0) ||
-                                 !isalnum((unsigned char)tp[-1]);
-                        int rb = !tp[5] ||
-                                 !isalnum((unsigned char)tp[5]);
-                        if (lb && rb) { ai_ok = 0; break; }
+            /* ── Deterministic post-AI validation ──────────────────
+             *
+             * Check for common AI failures before accepting the output.
+             * Flags: VFAIL_TRUST     = reintroduced trust language
+             *        VFAIL_SURNAME   = changed a word from the original
+             *        VFAIL_ACRONYM   = lowercased a consonant-only word
+             *        VFAIL_SPLIT     = different word count (split/merged)
+             *
+             * If any flag is set, escalate to AI validation pass. */
+            int vflags = 0;
+            #define VFAIL_TRUST   (1 << 0)
+            #define VFAIL_SURNAME (1 << 1)
+            #define VFAIL_ACRONYM (1 << 2)
+            #define VFAIL_SPLIT   (1 << 3)
+
+            /* Check 1: Trust language — reject if AI added trust-related
+             * words that weren't in the rules-engine output (ai_input).
+             * This catches both reintroduction (AI adds "Trust") and
+             * fragment addition (AI adds "Fam" back after it was stripped). */
+            {
+                static const char *trust_frags[] = {
+                    "TRUST", "TRUSTEE", "TRS", "TR",
+                    "RLT", "FMTR", "FTR", "FAM",
+                    "REVOCABLE", "IRREVOCABLE",
+                    NULL
+                };
+                const char *op = ai_out;
+                while (*op && !(vflags & VFAIL_TRUST)) {
+                    while (*op && isspace((unsigned char)*op)) op++;
+                    if (!*op) break;
+                    const char *ow = op;
+                    while (*op && !isspace((unsigned char)*op)) op++;
+                    size_t olen = (size_t)(op - ow);
+                    for (int tf = 0; trust_frags[tf]; tf++) {
+                        size_t tlen = strlen(trust_frags[tf]);
+                        if (olen != tlen) continue;
+                        if (icase_ncmp(ow, trust_frags[tf], tlen) != 0) continue;
+                        /* Found trust word in AI output — was it in ai_input? */
+                        int in_input = 0;
+                        const char *ip2 = result->ai_input;
+                        while (*ip2) {
+                            while (*ip2 && isspace((unsigned char)*ip2)) ip2++;
+                            if (!*ip2) break;
+                            const char *iw2 = ip2;
+                            while (*ip2 && !isspace((unsigned char)*ip2)) ip2++;
+                            size_t ilen2 = (size_t)(ip2 - iw2);
+                            if (ilen2 == tlen &&
+                                icase_ncmp(iw2, trust_frags[tf], tlen) == 0) {
+                                in_input = 1; break;
+                            }
+                        }
+                        if (!in_input) { vflags |= VFAIL_TRUST; break; }
                     }
                 }
             }
+
+            /* Check 2: Word count changed (split/merge) */
+            {
+                int wc_in = 0, wc_out = 0;
+                for (const char *q = result->ai_input; *q; ) {
+                    while (*q && isspace((unsigned char)*q)) q++;
+                    if (!*q) break;
+                    wc_in++;
+                    while (*q && !isspace((unsigned char)*q)) q++;
+                }
+                for (const char *q = ai_out; *q; ) {
+                    while (*q && isspace((unsigned char)*q)) q++;
+                    if (!*q) break;
+                    wc_out++;
+                    while (*q && !isspace((unsigned char)*q)) q++;
+                }
+                if (wc_in != wc_out) vflags |= VFAIL_SPLIT;
+            }
+
+            /* Check 3: Consonant-only uppercase word lowercased by AI */
+            {
+                /* Tokenize ai_input and ai_out, compare word-by-word */
+                const char *ip = result->ai_input, *op = ai_out;
+                while (*ip && *op) {
+                    while (*ip && isspace((unsigned char)*ip)) ip++;
+                    while (*op && isspace((unsigned char)*op)) op++;
+                    if (!*ip || !*op) break;
+                    const char *iw = ip, *ow = op;
+                    while (*ip && !isspace((unsigned char)*ip)) ip++;
+                    while (*op && !isspace((unsigned char)*op)) op++;
+                    size_t ilen = (size_t)(ip - iw);
+                    size_t olen = (size_t)(op - ow);
+
+                    if (ilen == olen && ilen >= 2) {
+                        /* Check if input word is all-uppercase and should
+                         * stay that way: either consonant-only (FKH, MDK)
+                         * or in the upper_words table (INC, LLC, LP). */
+                        int should_be_upper = 0;
+
+                        /* All-uppercase consonant-only (3+ chars) */
+                        if (ilen >= 3) {
+                            int all_upper_cons = 1;
+                            for (size_t k = 0; k < ilen; k++) {
+                                char ch = (char)toupper((unsigned char)iw[k]);
+                                if (!isupper((unsigned char)iw[k]) ||
+                                    ch=='A'||ch=='E'||ch=='I'||
+                                    ch=='O'||ch=='U'||ch=='Y') {
+                                    all_upper_cons = 0; break;
+                                }
+                            }
+                            if (all_upper_cons) should_be_upper = 1;
+                        }
+
+                        /* In upper_words table (INC, LLC, CORP, etc.) */
+                        if (!should_be_upper) {
+                            char uword[16];
+                            if (ilen < sizeof(uword)) {
+                                for (size_t k = 0; k < ilen; k++)
+                                    uword[k] = (char)toupper((unsigned char)iw[k]);
+                                uword[ilen] = '\0';
+                                if (in_table(uword, upper_words))
+                                    should_be_upper = 1;
+                            }
+                        }
+
+                        if (should_be_upper) {
+                            /* AI lowercased it? */
+                            int ai_changed = 0;
+                            for (size_t k = 0; k < ilen; k++) {
+                                if (iw[k] != ow[k]) { ai_changed = 1; break; }
+                            }
+                            if (ai_changed) vflags |= VFAIL_ACRONYM;
+                        }
+                    }
+                }
+            }
+
+            /* Check 4: Surname changed — a word in ai_input that appears
+             * in the original raw (case-insensitive) was changed by AI */
+            if (!(vflags & VFAIL_SPLIT)) {
+                const char *ip = result->ai_input, *op = ai_out;
+                while (*ip && *op) {
+                    while (*ip && isspace((unsigned char)*ip)) ip++;
+                    while (*op && isspace((unsigned char)*op)) op++;
+                    if (!*ip || !*op) break;
+                    const char *iw = ip, *ow = op;
+                    while (*ip && !isspace((unsigned char)*ip)) ip++;
+                    while (*op && !isspace((unsigned char)*op)) op++;
+                    size_t ilen = (size_t)(ip - iw);
+                    size_t olen = (size_t)(op - ow);
+
+                    /* Words differ? */
+                    if (ilen != olen ||
+                        icase_ncmp(iw, ow, ilen) != 0) {
+                        /* Check if the input word (case-insensitive)
+                         * appears in the original raw input */
+                        char iword[64];
+                        if (ilen < sizeof(iword)) {
+                            memcpy(iword, iw, ilen);
+                            iword[ilen] = '\0';
+                            /* Search raw for this word */
+                            const char *rp = result->raw;
+                            while (*rp) {
+                                while (*rp && isspace((unsigned char)*rp)) rp++;
+                                if (!*rp) break;
+                                const char *rw = rp;
+                                while (*rp && !isspace((unsigned char)*rp)) rp++;
+                                size_t rlen = (size_t)(rp - rw);
+                                if (rlen == ilen &&
+                                    icase_ncmp(rw, iword, ilen) == 0) {
+                                    /* Word was in original → AI changed it */
+                                    vflags |= VFAIL_SURNAME;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            /* ── Decision: accept, reject, or escalate to AI validator ─── */
+            int ai_ok = 1;
+
+            if (vflags & (VFAIL_TRUST | VFAIL_SURNAME | VFAIL_ACRONYM)) {
+                /* Hard reject — trust language reintroduced, AI changed
+                 * a name from the original record, or AI lowercased an
+                 * acronym/abbreviation the rules engine correctly uppercased. */
+                ai_ok = 0;
+            } else if (vflags & VFAIL_SPLIT) {
+                /* Uncertain — escalate to AI validation pass */
+                char validated[NAME_MAX_LEN];
+                if (llm_validate(result->raw, result->ai_input,
+                                 ai_out, validated, sizeof(validated))
+                    && *validated) {
+                    snprintf(ai_out, sizeof(ai_out), "%s", validated);
+                    /* ai_ok stays 1 — use the validated output */
+                } else {
+                    /* Validation call failed — fall back to rules output */
+                    ai_ok = 0;
+                }
+            }
+
             if (ai_ok) {
                 /* When the input is all-uppercase, force the AI output back
                  * to uppercase so the output convention matches the input. */

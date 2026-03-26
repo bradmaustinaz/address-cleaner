@@ -188,6 +188,8 @@ static const char *date_keywords[] = {
     "AS AMENDED", "AMENDED AND RESTATED", "AMENDED", "RESTATED",
     "DATED", "DTD", "U/D/T", "UTD", "U/T/D",
     "ESTABLISHED", "CREATED",
+    "DECLARATION OF", "DECLARATION",
+    "U/A", "UAD", "UA",
     NULL
 };
 
@@ -234,7 +236,10 @@ static const char *trust_keywords_quick[] = {
     "FAMILY TRUST", "LAND TRUST", "BLIND TRUST",
     "MARITAL TRUST", "BYPASS TRUST",
     "CREDIT SHELTER TRUST", "QTIP TRUST", "DYNASTY TRUST",
-    "TRUST", NULL
+    "TRUST",
+    "RLT", "FMTR", "FTR", "TR",   /* abbreviated trust types */
+    "LIV TR", "LIV",               /* truncated "LIVING TRUST" */
+    NULL
 };
 
 /* =========================================================================
@@ -391,10 +396,13 @@ static int extract_cotenant(char *s, int *flags)
     if (llen >= sizeof(left)) return 0;
     memcpy(left, s, llen);
     left[llen] = '\0';
-    if (!find_word(left, "TRUST")) return 0;
+    if (!find_word(left, "TRUST") && !find_word(left, "RLT") &&
+        !find_word(left, "FMTR") && !find_word(left, "FTR") &&
+        !find_word(left, "TR")) return 0;
 
     /* Right side must NOT contain trust language */
-    if (find_word(after_amp, "TRUST")) return 0;
+    if (find_word(after_amp, "TRUST") || find_word(after_amp, "RLT") ||
+        find_word(after_amp, "FMTR") || find_word(after_amp, "TR")) return 0;
 
     /* Build and trim the right side */
     char right[RULES_BUF_MAX];
@@ -500,6 +508,13 @@ static const TrustSuffix trust_suffixes[] = {
     { "CREDIT SHELTER TRUST",               0 },
     { "QTIP TRUST",                          0 },
     { "DYNASTY TRUST",                       0 },
+    /* Property ownership language */
+    { "SOLE & SEPARATE PROPERTY TRUST",      0 },
+    { "SOLE AND SEPARATE PROPERTY TRUST",    0 },
+    { "SOLE & SEPARATE PROPERTY",            0 },
+    { "SOLE AND SEPARATE PROPERTY",          0 },
+    { "COMMUNITY PROPERTY TRUST",            0 },
+    { "COMMUNITY PROPERTY",                  0 },
     /* Abbreviated trust types (common estate planning acronyms) */
     { "GRAT",                                0 },
     { "GRUT",                                0 },
@@ -507,6 +522,9 @@ static const TrustSuffix trust_suffixes[] = {
     { "CRAT",                                0 },
     { "QPRT",                                0 },
     { "ILIT",                                0 },
+    { "RLT",                                 0 },  /* Revocable Living Trust */
+    { "FMTR",                                0 },  /* Family Trust            */
+    { "FTR",                                 0 },  /* Family Trust            */
     /* Catch-all — must be last */
     { "TRUST",                               0 },
     { NULL, 0 }
@@ -574,7 +592,13 @@ static int strip_stale_family(char *s)
     if (!is_boundary(*(fam - 1))) return 0;
     if (icase_ncmp(fam, "FAMILY", flen) != 0) return 0;
 
-    /* Count "real" words before FAMILY (skip single-letter initials and &) */
+    /* Count "real" words before FAMILY.  Skip initials (1-2 chars),
+     * ampersands, and surname prefixes (VAN, DE, LA, SAN, DEL, ST, DI)
+     * since "VAN DENOVER FAMILY" is one compound surname, not two names. */
+    static const char *name_prefixes[] = {
+        "VAN", "DE", "LA", "SAN", "DEL", "ST", "DI", "LE", "DU", "DOS",
+        NULL
+    };
     int real_words = 0;
     char *p = s;
     while (p < fam) {
@@ -583,7 +607,16 @@ static int strip_stale_family(char *s)
         char *ws = p;
         while (p < fam && !isspace((unsigned char)*p) && *p != '&') p++;
         size_t wlen = (size_t)(p - ws);
-        if (wlen > 1) real_words++;  /* skip single-letter initials */
+        if (wlen <= 2) continue;  /* skip 1-2 char initials/abbrevs */
+        /* Skip surname prefixes */
+        int is_prefix = 0;
+        for (int pi = 0; name_prefixes[pi]; pi++) {
+            if (wlen == strlen(name_prefixes[pi]) &&
+                icase_ncmp(ws, name_prefixes[pi], wlen) == 0) {
+                is_prefix = 1; break;
+            }
+        }
+        if (!is_prefix) real_words++;
     }
 
     if (real_words <= 1) return 0;  /* "DONAHUE FAMILY" — keep */
@@ -694,7 +727,7 @@ static const TrustVocab trunc_vocab[] = {
 
     /* LIVING — truncated forms LIVI/LIVIN are tier 1 (never names).
      * LIV (3 chars) could be a Scandinavian name so min_prefix=4.
-     * Full "LIVING" has its own special-case handler below. */
+     * Full "LIVING" and trailing "LIV" have special-case handlers below. */
     {"LIVING",          6, 4, 1, 1},
 
     /* ── Tier 2: context words (only strip after a tier-1 match) ──
@@ -715,11 +748,14 @@ static const TrustVocab trunc_vocab[] = {
     {"INSURANCE",       9, 6, 0, 2},
     {"NOMINEE",         7, 5, 0, 2},
     {"COMMUNITY",       9, 6, 0, 2},
-    {"PROPERTY",        8, 6, 0, 2},
+    {"PROPERTY",        8, 4, 0, 2},  /* catches PROP truncation     */
     {"HOMESTEAD",       9, 6, 0, 2},
     {"BLIND",           5, 5, 0, 2},
     {"EDUCATION",       9, 6, 0, 2},
     {"MEDICAID",        8, 6, 0, 2},
+    {"DECLARATION",    11, 4, 0, 2},
+    {"SOLE",            4, 4, 0, 2},
+    {"SEPARATE",        8, 5, 0, 2},
 
     {NULL, 0, 0, 0, 0}
 };
@@ -739,10 +775,13 @@ static int is_trunc_vocab_prefix(const char *w, size_t n)
     return 0;
 }
 
-static int strip_truncated_suffix(char *s)
+static int strip_truncated_suffix(char *s, int prior_flags)
 {
     int stripped_any = 0;
-    int in_trust_ctx = 0;   /* set once a tier-1 word is found */
+    /* If trust language was already stripped earlier in the pipeline,
+     * tier-2 words (FAMILY, LAND, AGREEMENT, etc.) are eligible
+     * immediately — no tier-1 anchor required. */
+    int in_trust_ctx = (prior_flags & NAME_FLAG_WAS_TRUST) ? 1 : 0;
 
     /* ── Phase 1: Right-to-left iterative stripping ──────────────
      *
@@ -834,13 +873,19 @@ static int strip_truncated_suffix(char *s)
             if (!is_anchor) continue;
 
             /* Verify trailing words (wi+1 .. nwords-1) are trust vocab
-             * or short prefixes of trust vocab words. */
+             * or short prefixes of trust vocab words.  Allow at most
+             * 1 short (≤5 char) unknown word (e.g. "IRREVOCABLE HOUSE
+             * TRUST" — HOUSE isn't vocab but is sandwiched between
+             * anchor and TRUST).  The length cap prevents swallowing
+             * full person names that happen to follow trust words. */
             int all_ok = 1;
+            int unknowns = 0;
             for (int tj = wi + 1; tj < nwords; tj++) {
                 if (!is_trunc_vocab_prefix(words[tj].start,
                                      (size_t)words[tj].len)) {
-                    all_ok = 0;
-                    break;
+                    if (words[tj].len > 5) { all_ok = 0; break; }
+                    unknowns++;
+                    if (unknowns > 1) { all_ok = 0; break; }
                 }
             }
             if (!all_ok) continue;
@@ -903,6 +948,35 @@ static int strip_truncated_suffix(char *s)
         }
     }
 
+    /* ── Phase 4b: "LIV" alone at end of a 3+ word name ─────────
+     *
+     * Like Phase 4 but for truncated "LIV" (from "LIVING TRUST").
+     * min_prefix=4 in the vocab table protects the Scandinavian name
+     * "Liv" from Phase 1, but trailing "LIV" in a 3+ word name is
+     * almost certainly truncated trust language. */
+    if (!stripped_any) {
+        size_t slen3 = strlen(s);
+        const size_t llen3 = 3; /* strlen("LIV") */
+        if (slen3 > llen3) {
+            char *pos3 = s + slen3 - llen3;
+            if (is_boundary(*(pos3 - 1)) &&
+                icase_ncmp(pos3, "LIV", llen3) == 0) {
+                int wc3 = 0;
+                for (char *p3 = s; *p3; ) {
+                    while (*p3 && isspace((unsigned char)*p3)) p3++;
+                    if (!*p3) break;
+                    wc3++;
+                    while (*p3 && !isspace((unsigned char)*p3)) p3++;
+                }
+                if (wc3 >= 3) {
+                    *pos3 = '\0';
+                    rtrim(s);
+                    stripped_any = 1;
+                }
+            }
+        }
+    }
+
     return stripped_any;
 }
 
@@ -921,6 +995,9 @@ static const char *trustee_phrases[] = {
     "SUCCESSOR TRUSTEE",
     "CO-TRUSTEE",
     "TRUSTEE",
+    "CO-TRS",   /* abbreviation of CO-TRUSTEES */
+    "TRS",      /* abbreviation of TRUSTEES */
+    "TR",       /* abbreviation of TRUST/TRUSTEE */
     NULL
 };
 
@@ -942,6 +1019,7 @@ static int strip_trustee(char *s)
         }
         if (!found || ++safety > 10) break;
     }
+
     return stripped;
 }
 
@@ -1196,6 +1274,12 @@ static int deduplicate_and(char *s)
     while (isspace((unsigned char)*right)) right++;
     if (!*left || !*right) return 0;
 
+    /* Guard: if LEFT is a single letter, it's an initial — not a
+     * meaningful "subset" for deduplication.  Catches "M & M Family"
+     * where the M on the left trivially matches the M on the right. */
+    if (strlen(left) == 1 && isalpha((unsigned char)left[0]))
+        return 0;
+
     /* Case 1: every word in LEFT appears in RIGHT → RIGHT is the fuller name */
     if (all_words_in(right, left)) {
         /* Strip spurious trailing " FAMILY" that was left behind when
@@ -1343,6 +1427,17 @@ int rules_apply(char *s, size_t slen)
 
     int flags = 0;
 
+    /* Truncate at first semicolon — ';' typically separates a second
+     * entity reference (e.g. "Smith Trs; Res Irrevocable Trust").
+     * Keep only the first entry. */
+    {
+        char *semi = strchr(s, ';');
+        if (semi) {
+            *semi = '\0';
+            rtrim(s);
+        }
+    }
+
     /* Uppercase the working string */
     for (char *p = s; *p; p++) *p = (char)toupper((unsigned char)*p);
 
@@ -1358,11 +1453,47 @@ int rules_apply(char *s, size_t slen)
     if (strip_date_clause(s))      { flags |= NAME_FLAG_WAS_TRUST; dlog("strip_date_clause", s); }
     if (strip_trust_suffix(s))     { flags |= NAME_FLAG_WAS_TRUST; dlog("strip_trust_suffix", s); }
     if (strip_stale_family(s))     dlog("strip_stale_family", s);
-    if (strip_truncated_suffix(s)) { flags |= NAME_FLAG_WAS_TRUST; dlog("strip_truncated_suffix", s); }
+    if (strip_truncated_suffix(s, flags)) { flags |= NAME_FLAG_WAS_TRUST; dlog("strip_truncated_suffix", s); }
     if (strip_trustee(s))          { flags |= NAME_FLAG_WAS_TRUST; dlog("strip_trustee", s); }
+    /* Second pass: strip_trustee may remove "TR"/"TRS" exposing a
+     * trailing truncated word (e.g. "LIV TR" → "LIV" after TR strip). */
+    if (strip_truncated_suffix(s, flags)) { flags |= NAME_FLAG_WAS_TRUST; dlog("strip_truncated_suffix(2)", s); }
 
-    /* After trust stripping, there may be residual "OF THE" fragments */
-    {
+    /* Strip trailing year (4-digit 1900–2099) and the word "YEAR" that
+     * sometimes precede trust types in source data, e.g.
+     *   "Gajeski 2018 Revocable Trust" → after trust strip: "GAJESKI 2018"
+     *   "Turelli Year 2001 Revocable Trust" → "TURELLI YEAR 2001" */
+    if (flags & NAME_FLAG_WAS_TRUST) {
+        size_t sl = strlen(s);
+        if (sl >= 4) {
+            const char *tail = s + sl - 4;
+            if ((tail == s || is_boundary(*(tail - 1))) &&
+                isdigit((unsigned char)tail[0]) &&
+                isdigit((unsigned char)tail[1]) &&
+                isdigit((unsigned char)tail[2]) &&
+                isdigit((unsigned char)tail[3])) {
+                int yr = (tail[0]-'0')*1000 + (tail[1]-'0')*100 +
+                         (tail[2]-'0')*10  + (tail[3]-'0');
+                if (yr >= 1900 && yr <= 2099) {
+                    s[sl - 4] = '\0';
+                    rtrim(s);
+                    dlog("strip_year", s);
+                    /* Also strip preceding "YEAR" if present */
+                    sl = strlen(s);
+                    if (sl >= 4 && icase_ncmp(s + sl - 4, "YEAR", 4) == 0 &&
+                        (sl == 4 || is_boundary(s[sl - 5]))) {
+                        s[sl - 4] = '\0';
+                        rtrim(s);
+                    }
+                }
+            }
+        }
+    }
+
+    /* After trust stripping, there may be residual "OF THE" fragments.
+     * Only strip when trust language was actually removed — otherwise
+     * "OF THE" could be part of a business name (e.g. "Waltz of the Flowers"). */
+    if (flags & NAME_FLAG_WAS_TRUST) {
         char *p;
         int changed = 0;
         while ((p = find_word(s, "OF THE")) != NULL)
@@ -1386,8 +1517,20 @@ int rules_apply(char *s, size_t slen)
                 }
             }
         }
+        /* Also strip leading "OF " (e.g. "REVOCABLE TRUST OF ROBERT MEIER"
+         * → after trust strip: "OF ROBERT MEIER" → strip → "ROBERT MEIER") */
+        {
+            char *ls = ltrim(s);
+            if (ls != s) memmove(s, ls, strlen(ls) + 1);
+            if (icase_ncmp(s, "OF ", 3) == 0) {
+                str_erase(s, 0, 3);
+                ls = ltrim(s);
+                if (ls != s) memmove(s, ls, strlen(ls) + 1);
+                changed = 1;
+            }
+        }
         if (changed) dlog("strip_of_the", s);
-    }
+    } /* end if WAS_TRUST */
 
     if (strip_the_prefix(s))           dlog("strip_the_prefix (1)", s);
     if (strip_junk(s, &flags))         dlog("strip_junk", s);

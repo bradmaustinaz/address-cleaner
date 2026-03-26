@@ -224,12 +224,21 @@ static void build_prompt(const char *raw, const char *cleaned,
         "<|im_start|>system\n"
         "You clean US real estate property owner names for mailing labels.\n"
         "Rules:\n"
-        "1. Fix first-name typos (Michae->Michael, Smtih->Smith).\n"
-        "2. The Cleaned field already shows Last-First-Initial names reordered "
-        "to First Initial Last — confirm the order or fix any typos.\n"
-        "3. If Original shows a word in ALL CAPS (KJ, JLS, HEB), preserve "
-        "those capitals in your output even if Cleaned lowercased them.\n"
-        "4. Preserve & between two names. Remove leftover trust noise.\n"
+        "1. Fix ONLY obvious first-name typos (Michae->Michael, Smtih->Smith).\n"
+        "2. NEVER change last names or business names. Schuld stays Schuld, "
+        "Petersen stays Petersen. Do not correct perceived spelling errors "
+        "in surnames.\n"
+        "3. NEVER change business entity types (LLC, LLP, LLLP, LP, Inc, "
+        "Corp). Keep them exactly as given.\n"
+        "4. The Cleaned field may show Last-First-Initial names reordered "
+        "to First Initial Last — confirm the order or fix first-name typos.\n"
+        "5. If a 2-4 letter word has no vowels (A,E,I,O,U,Y), it is an "
+        "acronym — output it in ALL CAPS (KJ, FKH, MDK, NNN, etc).\n"
+        "6. If Original shows a word in ALL CAPS, preserve those capitals.\n"
+        "7. Preserve & between two names.\n"
+        "8. Strip any remaining trust/legal noise (Trust, Tr, Trs, RLT, "
+        "Revocable, Irrevocable, etc). NEVER expand abbreviations back "
+        "to full trust words.\n"
         "Reply with ONLY the corrected name on one line, nothing else.\n"
         "<|im_end|>\n"
         /* Reversed name — already reordered by rules, AI confirms */
@@ -272,6 +281,14 @@ static void build_prompt(const char *raw, const char *cleaned,
         "<|im_start|>assistant\n"
         "HEB\n"
         "<|im_end|>\n"
+        /* Trust abbreviation that should be stripped, not expanded */
+        "<|im_start|>user\n"
+        "Original: DUBOIS MARK J & LAURIE J TRS\n"
+        "Cleaned: Mark J & Laurie J Dubois Trs\n"
+        "<|im_end|>\n"
+        "<|im_start|>assistant\n"
+        "Mark J & Laurie J Dubois\n"
+        "<|im_end|>\n"
         /* Truncated trust noise appended to name */
         "<|im_start|>user\n"
         "Original: BARBARA TROILO SURVIIVO\n"
@@ -279,6 +296,22 @@ static void build_prompt(const char *raw, const char *cleaned,
         "<|im_end|>\n"
         "<|im_start|>assistant\n"
         "Barbara Troilo\n"
+        "<|im_end|>\n"
+        /* Acronym already uppercase — do NOT change or split */
+        "<|im_start|>user\n"
+        "Original: DHK PROPERTIES LLC\n"
+        "Cleaned: DHK Properties LLC\n"
+        "<|im_end|>\n"
+        "<|im_start|>assistant\n"
+        "DHK Properties LLC\n"
+        "<|im_end|>\n"
+        /* Unusual surname — do NOT correct to a common name */
+        "<|im_start|>user\n"
+        "Original: BORVITT TRACY L LIV TRUST\n"
+        "Cleaned: Tracy L Borvitt\n"
+        "<|im_end|>\n"
+        "<|im_start|>assistant\n"
+        "Tracy L Borvitt\n"
         "<|im_end|>\n"
         "<|im_start|>user\n"
         "Original: %s\n"
@@ -516,7 +549,8 @@ int llm_clean_name(const char *raw, const char *rules_result,
         "{"
         "\"prompt\":\"%s\","
         "\"n_predict\":48,"
-        "\"temperature\":0.1,"
+        "\"temperature\":0.0,"
+        "\"top_k\":1,"
         "\"stop\":[\"\\n\",\"<|im_end|>\"]"
         "}",
         escaped);
@@ -541,6 +575,127 @@ int llm_clean_name(const char *raw, const char *rules_result,
     if (*p == '{' || *p == '[')       return 0; /* JSON leaked into output */
     if (len > 128)                    return 0; /* hallucination paragraph */
     if (strstr(p, "<|im_start|>"))    return 0; /* prompt template leak */
+    if (strstr(p, "<|im_end|>"))      return 0;
+
+    snprintf(out, outlen, "%s", p);
+    return 1;
+}
+
+/* =========================================================================
+ * AI Validation
+ *
+ * Second-pass LLM call that compares the rules-engine output with the
+ * first AI's correction and decides which words to keep.  Only called
+ * when the deterministic validator flags uncertain changes.
+ * ====================================================================== */
+
+static void build_validate_prompt(const char *raw, const char *rules_out,
+                                  const char *ai_out,
+                                  char *buf, size_t bufsz)
+{
+    snprintf(buf, bufsz,
+        "<|im_start|>system\n"
+        "You validate corrections to US property owner names.\n"
+        "You will see three versions of a name:\n"
+        "  Original: the raw data (ALL CAPS)\n"
+        "  Rules: the automated cleaning result\n"
+        "  AI: a proposed correction\n"
+        "Rules:\n"
+        "1. If AI changed a surname that appears in Original, REJECT — "
+        "keep the Rules version of that word.\n"
+        "2. If AI lowercased an acronym (3+ uppercase consonant-only letters "
+        "like DHK, FKH, WHL), REJECT — keep the uppercase form.\n"
+        "3. If AI split a word (KJS->KJ S) or merged words, REJECT — "
+        "keep the Rules version.\n"
+        "4. If AI only changed capitalization of initials (Dm->DM, Sw->SW), "
+        "ACCEPT the AI version.\n"
+        "5. If AI fixed an obvious first-name typo, ACCEPT.\n"
+        "Output ONLY the final corrected name on one line.\n"
+        "<|im_end|>\n"
+        "<|im_start|>user\n"
+        "Original: DHK PROPERTIES LLC\n"
+        "Rules: DHK Properties LLC\n"
+        "AI: Dhk Properties LLC\n"
+        "<|im_end|>\n"
+        "<|im_start|>assistant\n"
+        "DHK Properties LLC\n"
+        "<|im_end|>\n"
+        "<|im_start|>user\n"
+        "Original: BORVITT TRACY L LIV TRUST\n"
+        "Rules: Tracy L Borvitt\n"
+        "AI: Tracy L Borowitz\n"
+        "<|im_end|>\n"
+        "<|im_start|>assistant\n"
+        "Tracy L Borvitt\n"
+        "<|im_end|>\n"
+        "<|im_start|>user\n"
+        "Original: KJS TRABAJO TRUST\n"
+        "Rules: KJS Trabajo\n"
+        "AI: KJ S Trabajo\n"
+        "<|im_end|>\n"
+        "<|im_start|>assistant\n"
+        "KJS Trabajo\n"
+        "<|im_end|>\n"
+        "<|im_start|>user\n"
+        "Original: PETERSEN SW REVOCABLE LIVING TRUST\n"
+        "Rules: Petersen Sw\n"
+        "AI: Petersen SW\n"
+        "<|im_end|>\n"
+        "<|im_start|>assistant\n"
+        "Petersen SW\n"
+        "<|im_end|>\n"
+        "<|im_start|>user\n"
+        "Original: %s\n"
+        "Rules: %s\n"
+        "AI: %s\n"
+        "<|im_end|>\n"
+        "<|im_start|>assistant\n",
+        raw, rules_out, ai_out);
+}
+
+int llm_validate(const char *raw, const char *rules_result,
+                 const char *ai_result, char *out, size_t outlen)
+{
+    if (!llm_is_ready() || !raw || !rules_result || !ai_result ||
+        !out || !outlen) return 0;
+
+    char prompt[6144];
+    build_validate_prompt(raw, rules_result, ai_result, prompt, sizeof(prompt));
+
+    char escaped[12288];
+    json_escape(prompt, escaped, sizeof(escaped));
+
+    char body[14336];
+    snprintf(body, sizeof(body),
+        "{"
+        "\"prompt\":\"%s\","
+        "\"n_predict\":48,"
+        "\"temperature\":0.0,"
+        "\"top_k\":1,"
+        "\"stop\":[\"\\n\",\"<|im_end|>\"]"
+        "}",
+        escaped);
+
+    char resp[16384];
+    if (!http_post_json("/completion", body, resp, sizeof(resp)))
+        return 0;
+
+    char content[512];
+    if (!extract_json_string(resp, "content", content, sizeof(content)))
+        return 0;
+
+    /* Trim */
+    char *p = content;
+    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') p++;
+    int len = (int)strlen(p);
+    while (len > 0 && (p[len-1]==' '||p[len-1]=='\t'||p[len-1]=='\n'||p[len-1]=='\r'))
+        p[--len] = '\0';
+
+    /* Sanity checks */
+    if (!*p)                          return 0;
+    if (*p == '{' || *p == '[')       return 0;
+    if (len > 128)                    return 0;
+    if (strstr(p, "<|im_start|>"))    return 0;
     if (strstr(p, "<|im_end|>"))      return 0;
 
     snprintf(out, outlen, "%s", p);
