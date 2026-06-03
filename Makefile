@@ -5,8 +5,17 @@
 # Clean:   make clean
 # Debug:   make DEBUG=1
 
-CC      = gcc
-RC      = windres
+# Toolchain. On Windows we use the native MinGW gcc/windres; on any other host
+# (e.g. a Linux CI box or a Claude Code web session) we cross-compile with the
+# MinGW-w64 tools. Override on the command line if your triplet differs, e.g.
+#   make CC=i686-w64-mingw32-gcc RC=i686-w64-mingw32-windres
+ifeq ($(OS),Windows_NT)
+  CC = gcc
+  RC = windres
+else
+  CC = x86_64-w64-mingw32-gcc
+  RC = x86_64-w64-mingw32-windres
+endif
 CFLAGS  = -Wall -Wextra -std=c99 -O2 -MMD -MP
 LIBS    = -lcomctl32 -lcomdlg32 -lgdi32 -lwinhttp -lshell32
 SUBSYSTEM = -mwindows

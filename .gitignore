@@ -11,8 +11,13 @@ NUL
 # Debug / log output
 *.log
 
-# Claude project memory (local only)
-.claude/
+# Claude project memory (local only), except the shared build hook + settings
+# so Claude Code on the web sessions install the MinGW toolchain automatically.
+.claude/*
+!.claude/settings.json
+!.claude/hooks
+.claude/hooks/*
+!.claude/hooks/session-start.sh
 
 # AI sidecar binaries and model (created by setup.bat)
 ai/
