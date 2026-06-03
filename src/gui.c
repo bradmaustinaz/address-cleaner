@@ -134,8 +134,6 @@ static void do_clean(void)
     int n_cleaned = 0;
     int n_flagged = 0;
     int n_trust   = 0;
-    char prev_raw[NAME_MAX_LEN] = {0};   /* previous raw input for dedup */
-
     TsvRow row;  /* ~65 KB — hoist above the loop to avoid per-iteration stack growth */
 
     char *line = input;
@@ -151,11 +149,14 @@ static void do_clean(void)
         /* Parse TSV row and clean field 0 */
         tsv_parse_row(line, &row);
 
-        /* Skip exact duplicate consecutive rows (same raw input) */
+        /* NOTE: do NOT drop "duplicate" rows here.  The tool is fed only the
+         * owner-name column, and the cleaned output is pasted back beside the
+         * address columns in Excel, so output must stay 1:1 with input rows.
+         * The same owner legitimately appears on multiple lines (same person,
+         * different properties); skipping any row would misalign every row
+         * below it.  Within-line duplicate collapsing still happens later in
+         * name_clean() (rules.c deduplicate_and). */
         const char *raw_field = tsv_field(&row, 0);
-        if (prev_raw[0] && strcmp(raw_field, prev_raw) == 0)
-            goto next_line;
-        snprintf(prev_raw, NAME_MAX_LEN, "%s", raw_field);
 
         NameResult nr;
         name_clean(raw_field, &nr);
