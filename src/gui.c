@@ -144,26 +144,8 @@ static void do_clean(void)
         char saved = *eol;
         if (*eol) *eol = '\0';
 
-        if (*line == '\0') goto next_line;
-
-        /* Parse TSV row and clean field 0 */
-        tsv_parse_row(line, &row);
-
-        /* NOTE: do NOT drop "duplicate" rows here.  The tool is fed only the
-         * owner-name column, and the cleaned output is pasted back beside the
-         * address columns in Excel, so output must stay 1:1 with input rows.
-         * The same owner legitimately appears on multiple lines (same person,
-         * different properties); skipping any row would misalign every row
-         * below it.  Within-line duplicate collapsing still happens later in
-         * name_clean() (rules.c deduplicate_and). */
-        const char *raw_field = tsv_field(&row, 0);
-
-        NameResult nr;
-        name_clean(raw_field, &nr);
-        slog_row(&nr, nr.ai_input[0] ? nr.ai_input : NULL,
-                      nr.ai_output[0] ? nr.ai_output : NULL);
-
-        /* Grow output buffer if needed */
+        /* Grow output buffer if needed (covers both the blank-row and the
+         * cleaned-row writes below). */
         size_t needed = out_pos + (size_t)input_len + 512;
         if (needed > out_cap) {
             out_cap = needed * 2;
@@ -179,6 +161,32 @@ static void do_clean(void)
             }
             out_buf = tmp;
         }
+
+        /* Blank input line -> blank output row.  The tool is fed only the
+         * owner-name column and its output is pasted back beside the address
+         * columns in Excel, so a blank name cell must still emit a row or every
+         * name below it would shift up out of alignment with its address. */
+        if (*line == '\0') {
+            out_buf[out_pos++] = '\r';
+            out_buf[out_pos++] = '\n';
+            n_cleaned++;
+            goto next_line;
+        }
+
+        /* Parse TSV row and clean field 0 */
+        tsv_parse_row(line, &row);
+
+        /* NOTE: do NOT drop "duplicate" rows here.  The same owner legitimately
+         * appears on multiple lines (same person, different properties); for the
+         * same alignment reason as blank rows above, skipping any row would
+         * misalign every row below it.  Within-line duplicate collapsing still
+         * happens later in name_clean() (rules.c deduplicate_and). */
+        const char *raw_field = tsv_field(&row, 0);
+
+        NameResult nr;
+        name_clean(raw_field, &nr);
+        slog_row(&nr, nr.ai_input[0] ? nr.ai_input : NULL,
+                      nr.ai_output[0] ? nr.ai_output : NULL);
 
         /* Write field 0 as cleaned name, pass remaining fields through */
         for (int i = 0; i < row.count; i++) {
